@@ -192,6 +192,7 @@ def soccer_df_to_ocel(df):
                                                                        , 'attribute:attack_game', 'attribute:attack_successful'
                                                                        , 'attribute:home_team_score', 'attribute:away_team_score'
                                                                        ])
+    return ocel
 
 def soccer_ocel(df, tracking_data_home_df, tracking_data_away_df, x_fields=10, y_fields=10):
     df = prepare_event_dataframe(df, x_fields=x_fields, y_fields=y_fields)
