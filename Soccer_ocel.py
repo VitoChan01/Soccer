@@ -29,8 +29,8 @@ def prepare_event_dataframe(df, x_fields=10, y_fields=10):
     df['attribute:duration'] = df['End Time [s]'] - df['Start Time [s]']
     #df['player']= df.apply(lambda row: [row["From"], row["To"]], axis=1)
     df['attribute:travel_distance'] = ((df['End X'] - df['Start X'])**2 + (df['End Y'] - df['Start Y'])**2)**0.5
-    df['attribute:start_grid'] = df.apply(lambda row: [get_field_position(row["Start X"], row["Start Y"], x_fields=x_fields, y_fields=y_fields)], axis=1)
-    df['end_grid'] = df.apply(lambda row: [get_field_position(row["End X"], row["End Y"], x_fields=x_fields, y_fields=y_fields)], axis=1)
+    df['attribute:start_grid'] = df.apply(lambda row: get_field_position(row["Start X"], row["Start Y"], x_fields=x_fields, y_fields=y_fields), axis=1)
+    df['end_grid'] = df.apply(lambda row: get_field_position(row["End X"], row["End Y"], x_fields=x_fields, y_fields=y_fields), axis=1)
     df['attribute:crossed_grid'] = df['attribute:start_grid'] != df['end_grid']
     df['attribute:attack_game'] = ((df['Type'] == 'SET PIECE') | (df['Type'] == 'RECOVERY')).cumsum()
 
@@ -84,6 +84,8 @@ def prepare_event_dataframe(df, x_fields=10, y_fields=10):
     df['attribute:away_team_score'] = df['away_goal'].cumsum()
 
     df.drop(columns=['home_goal', 'away_goal'], inplace=True)
+    df['concept:name'] = df.apply(
+        lambda row: f"{row['concept:name']}-{row['attribute:subtype']}" if pd.notnull(row['attribute:subtype']) else row['concept:name'],axis=1)
     return df
 
 # reshape the tracking data to long format (one row per player per time point)
@@ -116,8 +118,7 @@ def get_grid_change_events(tracking_df):
     return grid_change_events
 
 # format dataframe for ocel
-def format_ocel_df(tracking_df):
-    ocel_df = tracking_df.copy()
+def format_ocel_df(ocel_df):
     ocel_df['concept:name'] = f"Player changes position"
     ocel_df['time:timestamp'] = pd.to_datetime(ocel_df['Time [s]'], unit='s')
     ocel_df['crossed_grid'] = True
@@ -170,13 +171,35 @@ def merge_ball_and_player_event(ball_df, player_df):
                 player_df.at[i, col] = ball_df.at[pos, col]
     final_df = pd.concat([ball_df, player_df], ignore_index=True).sort_values('time:timestamp')
     final_df.reset_index(drop=True, inplace=True)
-    set_piece_time = final_df[final_df['concept:name'] == 'SET PIECE']['time:timestamp'].min()
+    #set_piece_time = final_df[final_df['concept:name'] == 'SET PIECE']['time:timestamp'].min()
+    set_piece_time = final_df[final_df['concept:name'].str.startswith('SET PIECE')]['time:timestamp'].min()
     mask = final_df['case:concept:name'].isnull() & (final_df['time:timestamp'] < set_piece_time)
     final_df.loc[mask, 'case:concept:name'] = 'PRE_POSSESSION'
     return final_df
 
 def soccer_df_to_ocel(df):
-    # convert to event log
+    ''' 
+    Convert DataFrame to object centric event log
+    Args:
+        df (pd.DataFrame): The input event dataframe with columns:
+            - 'concept:name': Activity name
+            - 'time:timestamp': Timestamp of the event
+            - 'From': Starting player
+            - 'To': Ending player
+            - 'attribute:subtype': Subtype of the event
+            - 'attribute:start_x', 'attribute:start_y': Starting coordinates
+            - 'attribute:end_x', 'attribute:end_y': Ending coordinates
+            - 'attribute:duration': Duration of the event
+            - 'attribute:travel_distance': Distance traveled during the event
+            - 'attribute:start_grid', 'end_grid': Grid positions at start and end
+            - 'attribute:crossed_grid': Whether the grid was crossed
+            - 'attribute:attack_game': Attack session identifier
+            - 'attribute:attack_successful': Whether the attack was successful
+            - 'attribute:home_team_score', 'attribute:away_team_score': Scores of home and away teams
+    Returns:
+        ocel (pm4py.objects.ocel.obj.OCEL): The converted object-centric event log.
+
+    '''
     #df = pm4py.format_dataframe(df, case_id='case:concept:name', activity_key='Activity', timestamp_key='Timestamp')
     event_log = pm4py.convert_to_event_log(df)
 
@@ -194,25 +217,6 @@ def soccer_df_to_ocel(df):
                                                                        ])
     return ocel
 
-def soccer_ocel(df, tracking_data_home_df, tracking_data_away_df, x_fields=10, y_fields=10):
-    df = prepare_event_dataframe(df, x_fields=x_fields, y_fields=y_fields)
-
-    tracking_long_home_df = reshape_tracking(tracking_data_home_df, "home")
-    tracking_long_away_df = reshape_tracking(tracking_data_away_df, "away")
-    tracking_long_df = pd.concat([tracking_long_home_df, tracking_long_away_df])
-
-    # add grid position to tracking long
-    tracking_long_df['Grid Position'] = tracking_long_df.apply(lambda row: get_field_position(row['X'], row['Y'], x_fields=x_fields, y_fields=y_fields), axis=1)
-    tracking_grid_change_events_df = get_grid_change_events(tracking_long_df)
-
-    # format the grid change events for ocel
-    ocel_df = format_ocel_df(tracking_grid_change_events_df)
-
-    # merge ball events and tracking events
-    final_df = merge_ball_and_player_event(df, ocel_df)
-
-    ocel=soccer_df_to_ocel(final_df)
-    return ocel
 
 def soccer_ocel_df(df, tracking_data_home_df, tracking_data_away_df, x_fields=10, y_fields=10):
     df = prepare_event_dataframe(df, x_fields=x_fields, y_fields=y_fields)
@@ -231,7 +235,18 @@ def soccer_ocel_df(df, tracking_data_home_df, tracking_data_away_df, x_fields=10
     # merge ball events and tracking events
     final_df = merge_ball_and_player_event(df, ocel_df)
 
+    final_df=final_df.sort_values(by=['time:timestamp', 'End Time [s]'],
+                                  ascending=[True, True],
+                                  na_position='last'  # Put nulls at the end
+                                  ).reset_index(drop=True)
+
     return final_df
+
+def soccer_ocel(df, tracking_data_home_df, tracking_data_away_df, x_fields=10, y_fields=10):
+    final_df = soccer_ocel_df(df, tracking_data_home_df, tracking_data_away_df, x_fields=x_fields, y_fields=y_fields)
+
+    ocel=soccer_df_to_ocel(final_df)
+    return ocel
 
 def soccer_ocel_no_tracking(df, x_fields=10, y_fields=10):
     df = prepare_event_dataframe(df, x_fields=x_fields, y_fields=y_fields)
