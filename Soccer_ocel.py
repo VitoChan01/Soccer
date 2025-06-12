@@ -76,7 +76,7 @@ def prepare_event_dataframe(df, x_fields=10, y_fields=10):
 
     df = team_scores(df)
     df = ball_obj(df)
-    df = pass_count(df)
+    #df = pass_count(df)
     df = split_pass(df)
 
 
@@ -142,6 +142,7 @@ def split_pass(ocel_df):
     pass_received['attribute:start_grid'] = pass_received['end_grid']
     pass_received['attribute:start_x'] = pass_received['attribute:end_x']
     pass_received['attribute:start_y'] = pass_received['attribute:end_y']
+    pass_received['time:timestamp'] = pd.to_datetime(pass_received['End Time [s]'], unit='s', origin='unix')
     pass_received['From'] = pass_received['To']
 
     pass_events['concept:name'] = pass_events['concept:name'].apply(lambda x: insert_after_pass(x, 'Out'))
