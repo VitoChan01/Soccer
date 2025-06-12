@@ -84,8 +84,31 @@ def prepare_event_dataframe(df, x_fields=10, y_fields=10):
     df['attribute:away_team_score'] = df['away_goal'].cumsum()
 
     df.drop(columns=['home_goal', 'away_goal'], inplace=True)
+    #Adding ball object
+    df['ball'] = df['concept:name'].apply(
+        lambda x: 'ball_1' if not str(x).startswith(('CARD', 'CHALLENGE', 'FAULT RECEIVED')) else None
+    )
     df['concept:name'] = df.apply(
         lambda row: f"{row['concept:name']}-{row['attribute:subtype']}" if pd.notnull(row['attribute:subtype']) else row['concept:name'],axis=1)
+    
+    is_pass = df['concept:name'] == 'PASS'
+
+    
+    pass_events = df[is_pass]
+
+
+    sorted_passes = pass_events.sort_values(by=['case:concept:name', 'time:timestamp'])
+
+    new_names = (
+        sorted_passes
+        .groupby('case:concept:name')
+        .cumcount()
+        .add(1)
+        .astype(str)
+        .radd('Pass')
+    )
+
+    df.loc[sorted_passes.index, 'concept:name'] = new_names
     return df
 
 # reshape the tracking data to long format (one row per player per time point)
@@ -96,15 +119,16 @@ def reshape_tracking(df, team_label):
             x_col = col
             y_col = f"Unnamed: {int(df.columns.get_loc(col)) + 1}"
             for _, row in df.iterrows():
-                long_rows.append({
-                    "Time [s]": row["Time [s]"],
-                    "Frame": row["Frame"],
-                    "Team": team_label.capitalize(),
-                    #"Player": f"{team_label.capitalize()}_{col}",
-                    "Player": f"{col}",
-                    "X": row[x_col],
-                    "Y": row[y_col]
-                })
+                if pd.notna(row[x_col]) and pd.notna(row[y_col]):
+                    long_rows.append({
+                        "Time [s]": row["Time [s]"],
+                        "Frame": row["Frame"],
+                        "Team": team_label.capitalize(),
+                        #"Player": f"{team_label.capitalize()}_{col}",
+                        "Player": f"{col}",
+                        "X": row[x_col],
+                        "Y": row[y_col]
+                    })
     return pd.DataFrame(long_rows)
 
 # identify only events when grid position of player changes
@@ -171,7 +195,6 @@ def merge_ball_and_player_event(ball_df, player_df):
                 player_df.at[i, col] = ball_df.at[pos, col]
     final_df = pd.concat([ball_df, player_df], ignore_index=True).sort_values('time:timestamp')
     final_df.reset_index(drop=True, inplace=True)
-    #set_piece_time = final_df[final_df['concept:name'] == 'SET PIECE']['time:timestamp'].min()
     set_piece_time = final_df[final_df['concept:name'].str.startswith('SET PIECE')]['time:timestamp'].min()
     mask = final_df['case:concept:name'].isnull() & (final_df['time:timestamp'] < set_piece_time)
     final_df.loc[mask, 'case:concept:name'] = 'PRE_POSSESSION'
@@ -256,7 +279,7 @@ def soccer_ocel_no_tracking(df, x_fields=10, y_fields=10):
     # convert to ocel
     ocel= log_to_ocel_multiple_obj_types(event_log, activity_column='concept:name'
                                          , timestamp_column='time:timestamp'
-                                         , obj_types=['Team','From', 'To','case:concept:name', 'end_grid']
+                                         , obj_types=['Team','From', 'To','case:concept:name', 'end_grid', 'ball']
                                          ,additional_event_attributes=['attribute:subtype'
                                                                        , 'attribute:start_x', 'attribute:start_y'
                                                                        , 'attribute:end_x', 'attribute:end_y' 

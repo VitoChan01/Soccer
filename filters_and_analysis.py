@@ -35,6 +35,7 @@ def filter_by_involved_player(df):
         return involved.any()
     return df[df.apply(include_row, axis=1)]
 
+
 def movement_frequency_last_player(df):
     result = []
 
@@ -66,6 +67,7 @@ def movement_frequency_last_player(df):
     result=pd.DataFrame(result)
     
     return result
+
 def movement_frequency_involved_players(df):
     result = []
 
@@ -94,6 +96,14 @@ def movement_frequency_involved_players(df):
             })
 
     result=pd.DataFrame(result)
+    result['num_involved_players'] = result['case:concept:name'].map(
+        lambda cid: len(
+            pd.concat([
+                df[df['case:concept:name'] == cid]['From'],
+                df[df['case:concept:name'] == cid]['To']
+            ]).dropna().unique()
+        )
+    )
     return result
 
 def movement_frequency_report(last_df, involved_df):
@@ -112,13 +122,15 @@ def movement_frequency_report(last_df, involved_df):
     total_t=sum(result['total_position_changes'])
     average_t=(result['total_position_changes']).mean()
     average_p=(result['average_per_player']).mean()
+    average_invol=(result['num_involved_players']).mean()
     shot_count=result['case:concept:name'].nunique()
     print(f'In this game, a total of {shot_count} shots were made.', 
             f'\nThe aggregated total shooter grid travel is {total}',
             f'\nThe average shooter grid travel per shot is {average}',
             f'\nThe aggregated total grid travel of all involved players is {total_t}',
             f'\nThe average grid travel of all attacks involved players per shot is {average_t}',
-            f'\nThe average grid travel of all attacks involved players per player per shot is {average_p}\n\n')
+            f'\nThe average grid travel of all attacks involved players per player per shot is {average_p}',
+            f'\nThe average number of involved players per shot is {average_invol}\n\n')
     for team in ['Home','Away']:
         team_result=result[result['team']==team]
         total=sum(team_result['position_changes'])
@@ -126,11 +138,50 @@ def movement_frequency_report(last_df, involved_df):
         total_t=sum(team_result['total_position_changes'])
         average_t=(team_result['total_position_changes']).mean()
         average_p=(team_result['average_per_player']).mean()
+        average_invol=(team_result['num_involved_players']).mean()
         shot_count=team_result['case:concept:name'].nunique()
         print(team, f'team, made a total of {shot_count} shots.', 
               f'\nThe aggregated total shooter grid travel is {total}',
               f'\nThe average shooter grid travel per shot is {average}',
               f'\nThe aggregated total grid travel of all involved players is {total_t}',
               f'\nThe average grid travel of all attacks involved players per shot is {average_t}',
-              f'\nThe average grid travel of all attacks involved players per player per shot is {average_p}\n\n')
+              f'\nThe average grid travel of all attacks involved players per player per shot is {average_p}',
+              f'\nThe average number of involved players per shot is {average_invol}\n\n')
     return result
+
+def get_player_trajectory(df, player_col_name):
+    # Find the column index for the player's X coordinate
+    x_idx = df.columns.get_loc(player_col_name)
+    
+    # Assuming the next column is the Y coordinate (as in your example)
+    y_idx = x_idx + 1
+    y_col_name = df.columns[y_idx]
+
+    # Extract time points array
+    time_points = df['Time [s]'].values
+
+    # Extract X and Y coordinate arrays for the player
+    x_coords = df[player_col_name].values
+    y_coords = df[y_col_name].values
+
+    return time_points, x_coords, y_coords
+def fraction_time_in_goal_area(x_coords, y_coords,team):
+    if team=='Away':
+        goal_x_min=0.93
+        goal_x_max=1.2
+    if team=='Home':
+        goal_x_min=-0.2
+        goal_x_max=0.06
+    goal_y_min=0.4
+    goal_y_max=0.6
+
+
+    inside_goal = (
+        (x_coords >= goal_x_min) & (x_coords <= goal_x_max) &
+        (y_coords >= goal_y_min) & (y_coords <= goal_y_max)
+    )
+    
+    # Fraction of time inside goal area
+    frac = inside_goal.sum() / len(x_coords) if len(x_coords) > 0 else 0
+    print(frac)
+    return frac
