@@ -3,8 +3,13 @@ import pandas as pd
 from pm4py.objects.ocel.util.log_ocel import log_to_ocel_multiple_obj_types
 import numpy as np
 import pm4py
+import re
 
+def soccer_ocel(df, tracking_data_home_df, tracking_data_away_df, x_fields=10, y_fields=10):
+    final_df = soccer_ocel_df(df, tracking_data_home_df, tracking_data_away_df, x_fields=x_fields, y_fields=y_fields)
 
+    ocel=soccer_df_to_ocel(final_df)
+    return ocel
 #load event data and preprocessing
 def prepare_event_dataframe(df, x_fields=10, y_fields=10):
     '''
@@ -69,7 +74,23 @@ def prepare_event_dataframe(df, x_fields=10, y_fields=10):
         'End Y': 'attribute:end_y'
     }, inplace=True)
 
-    #calculates team scores
+    df = team_scores(df)
+    df = ball_obj(df)
+    df = pass_count(df)
+    df = split_pass(df)
+
+
+    return df
+
+def ball_obj(df):
+    df['ball'] = df['concept:name'].apply(
+        lambda x: 'ball_1' if not str(x).startswith(('CARD', 'CHALLENGE', 'FAULT RECEIVED')) else None
+    )
+    df['concept:name'] = df.apply(
+        lambda row: f"{row['concept:name']}-{row['attribute:subtype']}" if pd.notnull(row['attribute:subtype']) else row['concept:name'],axis=1)
+    return df 
+
+def team_scores(df):
     df['home_goal'] = (
         df['attribute:subtype'].str.endswith('GOAL', na=False) &
         df['case:concept:name'].str.startswith('HA')
@@ -84,19 +105,11 @@ def prepare_event_dataframe(df, x_fields=10, y_fields=10):
     df['attribute:away_team_score'] = df['away_goal'].cumsum()
 
     df.drop(columns=['home_goal', 'away_goal'], inplace=True)
-    #Adding ball object
-    df['ball'] = df['concept:name'].apply(
-        lambda x: 'ball_1' if not str(x).startswith(('CARD', 'CHALLENGE', 'FAULT RECEIVED')) else None
-    )
-    df['concept:name'] = df.apply(
-        lambda row: f"{row['concept:name']}-{row['attribute:subtype']}" if pd.notnull(row['attribute:subtype']) else row['concept:name'],axis=1)
-    
+    return df
+
+def pass_count(df):
     is_pass = df['concept:name'] == 'PASS'
-
-    
     pass_events = df[is_pass]
-
-
     sorted_passes = pass_events.sort_values(by=['case:concept:name', 'time:timestamp'])
 
     new_names = (
@@ -105,11 +118,40 @@ def prepare_event_dataframe(df, x_fields=10, y_fields=10):
         .cumcount()
         .add(1)
         .astype(str)
-        .radd('Pass')
+        .radd('PASS')
     )
 
     df.loc[sorted_passes.index, 'concept:name'] = new_names
     return df
+
+
+def split_pass(ocel_df):
+    def insert_after_pass(name, insert_text):
+    # This will match 'Pass' optionally followed by digits, and capture both parts
+        match = re.match(r'(PASS)(\d*)', name, re.IGNORECASE)
+        if match:
+            return f"{match.group(1)} {insert_text}{match.group(2)}".replace('  ', ' ')
+        else:
+            return name
+
+    # Apply to the dataframe
+    pass_mask = ocel_df['concept:name'].str.startswith('PASS')
+    pass_events = ocel_df[pass_mask].copy()
+    pass_received = pass_events.copy()
+    pass_received['concept:name'] = pass_received['concept:name'].apply(lambda x: insert_after_pass(x, 'Received'))
+    pass_received['attribute:start_grid'] = pass_received['end_grid']
+    pass_received['attribute:start_x'] = pass_received['attribute:end_x']
+    pass_received['attribute:start_y'] = pass_received['attribute:end_y']
+    pass_received['From'] = pass_received['To']
+
+    pass_events['concept:name'] = pass_events['concept:name'].apply(lambda x: insert_after_pass(x, 'Out'))
+    ocel_df_with_pass_dup = pd.concat([ocel_df[~pass_mask], pass_events, pass_received], ignore_index=True)
+    ocel_df_with_pass_dup = ocel_df_with_pass_dup.drop(columns=['To']).rename(columns={'From': 'Player'})
+    ocel_df_with_pass_dup=ocel_df_with_pass_dup.sort_values(by=['time:timestamp', 'End Time [s]'],
+                                  ascending=[True, True],
+                                  na_position='last' 
+                                  ).reset_index(drop=True)
+    return ocel_df_with_pass_dup
 
 # reshape the tracking data to long format (one row per player per time point)
 def reshape_tracking(df, team_label):
@@ -146,14 +188,12 @@ def format_ocel_df(ocel_df):
     ocel_df['concept:name'] = f"Player changes position"
     ocel_df['time:timestamp'] = pd.to_datetime(ocel_df['Time [s]'], unit='s')
     ocel_df['crossed_grid'] = True
-    ocel_df['To']=None
 
     ocel_df.rename(columns={
     'X': 'attribute:end_x',
     'Y': 'attribute:end_y',
     'From Position': 'attribute:start_grid',
-    'To Position': 'end_grid',
-    'Player': 'From',
+    'To Position': 'end_grid'
     }, inplace=True)
     
     return ocel_df
@@ -229,7 +269,7 @@ def soccer_df_to_ocel(df):
     # convert to ocel
     ocel= log_to_ocel_multiple_obj_types(event_log, activity_column='concept:name'
                                          , timestamp_column='time:timestamp'
-                                         , obj_types=['Team','From', 'To','case:concept:name', 'end_grid']
+                                         , obj_types=['Team','Player','case:concept:name', 'end_grid', 'ball']
                                          ,additional_event_attributes=['attribute:subtype'
                                                                        , 'attribute:start_x', 'attribute:start_y'
                                                                        , 'attribute:end_x', 'attribute:end_y' 
@@ -265,12 +305,6 @@ def soccer_ocel_df(df, tracking_data_home_df, tracking_data_away_df, x_fields=10
 
     return final_df
 
-def soccer_ocel(df, tracking_data_home_df, tracking_data_away_df, x_fields=10, y_fields=10):
-    final_df = soccer_ocel_df(df, tracking_data_home_df, tracking_data_away_df, x_fields=x_fields, y_fields=y_fields)
-
-    ocel=soccer_df_to_ocel(final_df)
-    return ocel
-
 def soccer_ocel_no_tracking(df, x_fields=10, y_fields=10):
     df = prepare_event_dataframe(df, x_fields=x_fields, y_fields=y_fields)
 
@@ -279,7 +313,7 @@ def soccer_ocel_no_tracking(df, x_fields=10, y_fields=10):
     # convert to ocel
     ocel= log_to_ocel_multiple_obj_types(event_log, activity_column='concept:name'
                                          , timestamp_column='time:timestamp'
-                                         , obj_types=['Team','From', 'To','case:concept:name', 'end_grid', 'ball']
+                                         , obj_types=['Team','Player','case:concept:name', 'end_grid', 'ball']
                                          ,additional_event_attributes=['attribute:subtype'
                                                                        , 'attribute:start_x', 'attribute:start_y'
                                                                        , 'attribute:end_x', 'attribute:end_y' 
