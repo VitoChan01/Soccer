@@ -5,8 +5,28 @@ import numpy as np
 import pm4py
 import re
 
-def soccer_ocel(df, tracking_data_home_df, tracking_data_away_df, x_fields=10, y_fields=10):
-    final_df = soccer_ocel_df(df, tracking_data_home_df, tracking_data_away_df, x_fields=x_fields, y_fields=y_fields)
+def soccer_ocel(df, tracking_data_home_df, tracking_data_away_df, player_subtype=False, x_fields=10, y_fields=10):
+    '''
+    Convert soccer event dataframe to object-centric event log (OCEL) format.
+    Args:
+        df (pd.DataFrame): The input event dataframe with columns:
+            - 'concept:name': Activity name
+            - 'time:timestamp': Timestamp of the event
+            - 'From': Starting player
+            - 'To': Ending player
+            - 'attribute:subtype': Subtype of the event
+            - 'Start X', 'Start Y': Starting coordinates
+            - 'End X', 'End Y': Ending coordinates
+            - 'Start Time [s]', 'End Time [s]': Start and end times in seconds
+        tracking_data_home_df (pd.DataFrame): Tracking data for home team.
+        tracking_data_away_df (pd.DataFrame): Tracking data for away team.
+        player_subtype (bool): Whether to classify players into roles (Goalkeeper, Attacker, Defender). Default is False.
+        x_fields (int): Number of fields along the x-axis. Default is 10.
+        y_fields (int): Number of fields along the y-axis. Default is 10.
+    Returns:
+        ocel (pm4py.objects.ocel.obj.OCEL): The converted object-centric event log.
+    '''
+    final_df = soccer_ocel_df(df, tracking_data_home_df, tracking_data_away_df, player_subtype, x_fields=x_fields, y_fields=y_fields)
 
     ocel=soccer_df_to_ocel(final_df)
     return ocel
@@ -300,7 +320,28 @@ def soccer_df_to_ocel(df):
     return ocel
 
 
-def soccer_ocel_df(df, tracking_data_home_df, tracking_data_away_df, x_fields=10, y_fields=10):
+def soccer_ocel_df(df, tracking_data_home_df, tracking_data_away_df, player_subtypes=False, x_fields=10, y_fields=10):
+    '''
+    convert soccer event dataframe to object-centric event log (OCEL) format.
+    Args:
+        df (pd.DataFrame): The input event dataframe with columns:
+            - 'concept:name': Activity name
+            - 'time:timestamp': Timestamp of the event
+            - 'From': Starting player
+            - 'To': Ending player
+            - 'attribute:subtype': Subtype of the event
+            - 'Start X', 'Start Y': Starting coordinates
+            - 'End X', 'End Y': Ending coordinates
+            - 'Start Time [s]', 'End Time [s]': Start and end times in seconds
+        tracking_data_home_df (pd.DataFrame): Tracking data for home team.
+        tracking_data_away_df (pd.DataFrame): Tracking data for away team.
+        player_subtypes (bool): Whether to classify players into roles (Goalkeeper, Attacker, Defender). Default is False.
+        x_fields (int): Number of fields along the x-axis. Default is 10.
+        y_fields (int): Number of fields along the y-axis. Default is 10.
+    Returns:
+        pd.DataFrame: The processed event dataframe in OCEL format with additional attributes.
+    '''
+    
     df = prepare_event_dataframe(df, x_fields=x_fields, y_fields=y_fields)
 
     tracking_long_home_df = reshape_tracking(tracking_data_home_df, "home")
@@ -322,8 +363,8 @@ def soccer_ocel_df(df, tracking_data_home_df, tracking_data_away_df, x_fields=10
                                   na_position='last'  # Put nulls at the end
                                   ).reset_index(drop=True)
     final_df['Possession']=final_df['case:concept:name'].copy()
-
-    final_df=classify_player_role(final_df,tracking_data_home_df, tracking_data_away_df)
+    if player_subtypes:
+        final_df=classify_player_role(final_df,tracking_data_home_df, tracking_data_away_df)
 
     return final_df
 
