@@ -38,6 +38,7 @@ def prepare_event_dataframe(df, x_fields=10, y_fields=10):
     df['end_grid'] = df.apply(lambda row: get_field_position(row["End X"], row["End Y"], x_fields=x_fields, y_fields=y_fields), axis=1)
     df['attribute:crossed_grid'] = df['attribute:start_grid'] != df['end_grid']
     df['attribute:attack_game'] = ((df['Type'] == 'SET PIECE') | (df['Type'] == 'RECOVERY')).cumsum()
+    
 
     attack_id_away = 0
     attack_id_home = 0
@@ -73,21 +74,28 @@ def prepare_event_dataframe(df, x_fields=10, y_fields=10):
         'End X': 'attribute:end_x',
         'End Y': 'attribute:end_y'
     }, inplace=True)
+    
+    #join type and subtype
+    #df['concept:name'] = df.apply(
+    #    lambda row: f"{row['concept:name']}-{row['attribute:subtype']}" if pd.notnull(row['attribute:subtype']) else row['concept:name'],axis=1)
 
     df = team_scores(df)
     df = ball_obj(df)
     #df = pass_count(df)
+    df = score_event(df)
     df = split_pass(df)
+    df=df.sort_values(by=['time:timestamp', 'End Time [s]'],
+                      ascending=[True, True],na_position='last' 
+                      ).reset_index(drop=True)
 
 
     return df
+
 
 def ball_obj(df):
     df['ball'] = df['concept:name'].apply(
         lambda x: 'ball_1' if not str(x).startswith(('CARD', 'CHALLENGE', 'FAULT RECEIVED')) else None
     )
-    df['concept:name'] = df.apply(
-        lambda row: f"{row['concept:name']}-{row['attribute:subtype']}" if pd.notnull(row['attribute:subtype']) else row['concept:name'],axis=1)
     return df 
 
 def team_scores(df):
@@ -124,6 +132,18 @@ def pass_count(df):
     df.loc[sorted_passes.index, 'concept:name'] = new_names
     return df
 
+def score_event(df):
+    goal_events_mask = df['attribute:subtype'].astype(str).str.endswith('GOAL', na=False)
+    goal_events = df[goal_events_mask].copy()
+    goal_events_dup = goal_events.copy()
+    goal_events_dup['concept:name'] = 'Goal'
+    goal_events_dup['attribute:start_grid'] = goal_events_dup['end_grid']
+    goal_events_dup['attribute:start_x'] = goal_events_dup['attribute:end_x']
+    goal_events_dup['attribute:start_y'] = goal_events_dup['attribute:end_y']
+    goal_events_dup['time:timestamp'] = pd.to_datetime(goal_events_dup['End Time [s]'], unit='s', origin='unix')
+    df = pd.concat([df, goal_events_dup], ignore_index=True)
+    return df
+
 
 def split_pass(ocel_df):
     def insert_after_pass(name, insert_text):
@@ -148,10 +168,7 @@ def split_pass(ocel_df):
     pass_events['concept:name'] = pass_events['concept:name'].apply(lambda x: insert_after_pass(x, 'Out'))
     ocel_df_with_pass_dup = pd.concat([ocel_df[~pass_mask], pass_events, pass_received], ignore_index=True)
     ocel_df_with_pass_dup = ocel_df_with_pass_dup.drop(columns=['To']).rename(columns={'From': 'Player'})
-    ocel_df_with_pass_dup=ocel_df_with_pass_dup.sort_values(by=['time:timestamp', 'End Time [s]'],
-                                  ascending=[True, True],
-                                  na_position='last' 
-                                  ).reset_index(drop=True)
+    
     return ocel_df_with_pass_dup
 
 # reshape the tracking data to long format (one row per player per time point)
@@ -270,7 +287,8 @@ def soccer_df_to_ocel(df):
     # convert to ocel
     ocel= log_to_ocel_multiple_obj_types(event_log, activity_column='concept:name'
                                          , timestamp_column='time:timestamp'
-                                         , obj_types=['Team','Player','case:concept:name', 'end_grid', 'ball']
+                                         , obj_types=['ball','Goalkeeper','Attacker','Defender','Team','Player','Possession', 'end_grid']
+                                         #, obj_types=['Goalkeeper','Attacker','Defender','Team','Player','Possession', 'end_grid', 'ball']
                                          ,additional_event_attributes=['attribute:subtype'
                                                                        , 'attribute:start_x', 'attribute:start_y'
                                                                        , 'attribute:end_x', 'attribute:end_y' 
@@ -303,6 +321,9 @@ def soccer_ocel_df(df, tracking_data_home_df, tracking_data_away_df, x_fields=10
                                   ascending=[True, True],
                                   na_position='last'  # Put nulls at the end
                                   ).reset_index(drop=True)
+    final_df['Possession']=final_df['case:concept:name'].copy()
+
+    final_df=classify_player_role(final_df,tracking_data_home_df, tracking_data_away_df)
 
     return final_df
 
@@ -314,7 +335,7 @@ def soccer_ocel_no_tracking(df, x_fields=10, y_fields=10):
     # convert to ocel
     ocel= log_to_ocel_multiple_obj_types(event_log, activity_column='concept:name'
                                          , timestamp_column='time:timestamp'
-                                         , obj_types=['Team','Player','case:concept:name', 'end_grid', 'ball']
+                                         , obj_types=['Team','Player','Possession', 'end_grid', 'ball','Goalkeeper','Attacker','Defender']
                                          ,additional_event_attributes=['attribute:subtype'
                                                                        , 'attribute:start_x', 'attribute:start_y'
                                                                        , 'attribute:end_x', 'attribute:end_y' 
@@ -324,3 +345,115 @@ def soccer_ocel_no_tracking(df, x_fields=10, y_fields=10):
                                                                        , 'attribute:home_team_score', 'attribute:away_team_score'
                                                                        ])
     return ocel
+
+
+def get_player_trajectory(df, player_col_name):
+
+    x_idx = df.columns.get_loc(player_col_name)
+    
+    y_idx = x_idx + 1
+    y_col_name = df.columns[y_idx]
+
+    time_points = df['Time [s]'].values
+
+    x_coords = df[player_col_name].values
+    y_coords = df[y_col_name].values
+
+    mask = (~pd.isnull(x_coords)) & (~pd.isnull(y_coords))
+    time_points = time_points[mask]
+    x_coords = x_coords[mask]
+    y_coords = y_coords[mask]
+
+    return time_points, x_coords, y_coords
+def calculate_zone_fractions(x_coords, team):
+    if team == 'Away':
+        # Attacking direction is right (increasing x)
+        defense_zone = (0.0, 0.5)
+        #midfield_zone = (0.5, 0.75)
+        attack_zone = (0.5, 1.0)
+    else:  # Home team attacks left
+        defense_zone = (0.5, 1.0)
+        #midfield_zone = (0.25, 0.5)
+        attack_zone = (0.0, 0.5)
+
+    total = len(x_coords)
+    if total == 0:
+        return 0, 0, 0
+
+    defense_frac = ((x_coords >= defense_zone[0]) & (x_coords < defense_zone[1])).sum() / total
+    #midfield_frac = ((x_coords >= midfield_zone[0]) & (x_coords < midfield_zone[1])).sum() / total
+    attack_frac  = ((x_coords >= attack_zone[0])  & (x_coords < attack_zone[1])).sum() / total
+
+    return defense_frac, attack_frac
+def classify_all_players(tracking_df, team_name):
+    def_L=[]
+    att_L=[]
+    for col in tracking_df.columns:
+        if col.startswith("Player"):
+            _,x, y = get_player_trajectory(tracking_df, col)
+            def_frac, att_frac = calculate_zone_fractions(x, team_name)
+            role = np.argmax([def_frac, att_frac])
+            if role==0:
+                def_L.append(col)
+            else:
+                att_L.append(col)
+
+    return def_L, att_L
+
+def fraction_time_in_goal_area(x_coords, y_coords,team):
+    if team=='Away':
+        goal_x_min=0.93
+        goal_x_max=1.2
+    if team=='Home':
+        goal_x_min=-0.2
+        goal_x_max=0.06
+    goal_y_min=0.4
+    goal_y_max=0.6
+
+
+    inside_goal = (
+        (x_coords >= goal_x_min) & (x_coords <= goal_x_max) &
+        (y_coords >= goal_y_min) & (y_coords <= goal_y_max)
+    )
+    
+    # Fraction of time inside goal area
+    frac = inside_goal.sum() / len(x_coords) if len(x_coords) > 0 else 0
+    return frac
+
+def find_goalkeepers(tracking_data_home_df, tracking_data_away_df):
+    goalkeepers=[]
+    col_L,frac_L=[],[]
+    for col in tracking_data_away_df.columns:
+        if col.startswith("Player"):
+            _,x_trace,y_trace=get_player_trajectory(tracking_data_away_df,col)
+            frac=fraction_time_in_goal_area(x_trace,y_trace, 'Away')
+            col_L.append(col)
+            frac_L.append(frac)
+    goalkeepers.append(col_L[np.argmax(frac)])
+    col_L,frac_L=[],[]
+    for col in tracking_data_home_df.columns:
+        if col.startswith("Player"):
+            _,x_trace,y_trace=get_player_trajectory(tracking_data_home_df,col)
+            frac=fraction_time_in_goal_area(x_trace,y_trace, 'Home')
+            col_L.append(col)
+            frac_L.append(frac)
+    goalkeepers.append(col_L[np.argmax(frac)])
+    return goalkeepers
+
+def classify_player_role(df,tracking_data_home_df, tracking_data_away_df):
+    away_def,away_att = classify_all_players(tracking_data_away_df, 'Away')
+    home_def,home_att = classify_all_players(tracking_data_home_df, 'Home')
+    att_players=away_att+home_att
+    def_players=away_def+home_def
+    goalkeepers=find_goalkeepers(tracking_data_home_df, tracking_data_away_df)
+    att_players = [p for p in att_players if p not in goalkeepers]
+    def_players = [p for p in def_players if p not in goalkeepers]
+    df['Goalkeeper'] = None
+    df['Attacker'] = None
+    df['Defender'] = None
+
+    df.loc[df['Player'].isin(att_players), 'Attacker'] = df.loc[df['Player'].isin(att_players), 'Player'].copy()
+    df.loc[df['Player'].isin(goalkeepers), 'Goalkeeper'] = df.loc[df['Player'].isin(goalkeepers), 'Player'].copy()
+    df.loc[df['Player'].isin(def_players), 'Defender'] = df.loc[df['Player'].isin(def_players), 'Player'].copy()
+
+    return df
