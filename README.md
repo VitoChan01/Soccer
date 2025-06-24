@@ -4,7 +4,7 @@
 Object-centric event logs expand the conventional single-case notion event log by considering multiple objects, allowing for the analysis of more complex and realistic process behavior. However, the number of real-world object-centric event logs remains limited, and further studies are needed to test their usefulness. The increasing availability of data from team sports can facilitate object-centric process mining, leveraging both real-world data and suitable use cases. In this paper, we present a framework for transforming football data into an object-centric event log, further enhanced with a spatial dimension. We demonstrate the effectiveness of our framework by generating object-centric event logs based on real-world football data and discuss the results for varying process representations. With our paper, we provide the first example for object-centric event logs in football analytics. Future work should consider variant analysis and filtering techniques to better handle variability.
 
 
-This repository contains the implementation of "Transforming Football Data into Object-centric Event Logs with Spatial Context Information"
+This repository contains the implementation of "Transforming Football Data into Object-centric Event Logs with Spatial Context Information". This paper was submitted to the 3rd Workshop on Object-centric processes from A to Z (BPM 2025).
 
 ![Map view](spatialView_withPlayers.png)
 
