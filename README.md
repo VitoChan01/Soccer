@@ -6,7 +6,7 @@ Object-centric event logs expand the conventional single-case notion event log b
 
 This repository contains the implementation of "Transforming Football Data into Object-centric Event Logs with Spatial Context Information". This paper was submitted to the 3rd Workshop on Object-centric processes from A to Z (BPM 2025).
 
-![Map view](spatialView_withPlayers.png)
+![Map view](figure\examplePossessionWithShot.png)
 
 ## Dependencies
 * Python 3.11+
