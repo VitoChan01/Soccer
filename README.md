@@ -35,22 +35,29 @@ The world cup dataset is only required for the analysis *analyze_alternative_dat
 Your folder structure should now be
 data/02_world_cup_dataset/matches/...
 data/02_world_cup_dataset/teams/...
-## Codes
-### Implementation
-- [`convert_ocel.ipynb`](convert_ocel.ipynb): 
-    - Example notebook to transform the the football data into object-centric event log of game-based events without the player movement events.
-- [`import_tracking_data.ipynb`](import_tracking_data.ipynb): 
-    - Example notebook to transform the the tracking data into object-centric event log of player movement events.
+## Implementation
+### Log Generation
+- [`ocel_with_movement.ipynb`](ocel_with_movement.ipynb): 
+    - Example notebook to convert the the football data into object-centric event log of game-based events with the player movement events.
+
+### Visualization
 - [`measurements.ipynb`](measurements.ipynb): 
     - Experiments wiht performance measurements.
     - Statistical analysis.
     - Visualization of process instance on spatial map.
-- [`ocel_with_movement.ipynb`](ocel_with_movement.ipynb): 
-    - Example notebook to convert the the football data into object-centric event log of game-based events with the player movement events.
 - [`ocel_with_movement_df.ipynb`](ocel_with_movement_df.ipynb): 
     - Example notebook to convert the the football data into a Pandas DataFrame structured for object-centric event log of game-based events with the player movement events.
     - Various filtering of event log and visualization with DFG.
 
+### Other Examples
+- [`convert_ocel.ipynb`](convert_ocel.ipynb): 
+    - Example notebook to transform the the football data into object-centric event log of game-based events without the player movement events.
+- [`import_tracking_data.ipynb`](import_tracking_data.ipynb): 
+    - Example notebook to transform the the tracking data into object-centric event log of player movement events.
+- [`ocel_with_movement_df_subtype_encoded.ipynb`](ocel_with_movement_df_subtype_encoded.ipynb): 
+    - Example notebook to convert the the football data into a Pandas DataFrame structured for object-centric event log of game-based events with the player movement events.
+    - Events enriched with event subtype.
+    - Various filtering of event log and visualization with DFG.
 
 ### Modules
 - [`Soccer_ocel.py`](Soccer_ocel.py): 
@@ -59,7 +66,7 @@ data/02_world_cup_dataset/teams/...
     - Functinos to filter the event log by the last player of a possession or by all players involved in a possession. 
     - Function to report movement statistics within a possession.
 - [`helpers.py`](helpers.py): 
-    - Functino to get the field position in grid coordinate system. 
+    - Function to get the field position in grid coordinate system. 
 
 ## Event log
 The event log has the following attributes:
