@@ -1,0 +1,16 @@
+LICENSE
+README.md
+pyproject.toml
+setup.py
+Soccer_OCEL/Soccer_ocel.py
+Soccer_OCEL/__init__.py
+Soccer_OCEL/filters_and_analysis.py
+Soccer_OCEL/helpers.py
+Soccer_OCEL/idsse_import.py
+Soccer_OCEL/trace_events.py
+Soccer_OCEL/trace_voronoi.py
+Soccer_OCEL/utils.py
+Soccer_OCEL.egg-info/PKG-INFO
+Soccer_OCEL.egg-info/SOURCES.txt
+Soccer_OCEL.egg-info/dependency_links.txt
+Soccer_OCEL.egg-info/top_level.txt
