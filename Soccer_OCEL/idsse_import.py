@@ -6,7 +6,7 @@ import Soccer_OCEL.utils as utils
 from Soccer_OCEL.trace_events import position_events
 from Soccer_OCEL.trace_voronoi import add_voronoi_area
 import json
-from pathlib import Path
+
 
 #load
 class GameData:
@@ -37,11 +37,11 @@ class GameData:
             "Home Team ID": self.home_tID,
             "Away Team ID": self.away_tID,
             "Frame Rate": self.framerate,
-            "Num Events": len(self.events) if hasattr(self.events, "__len__") else "N/A",
+            "Num Events": len(self.events),
             "Num Players": len(self.team_sheets_df),
         }
     
-def load_game_data(path, Game, xy_fields=(10,10), encode_recipient_role=False, voronoi_area=False):
+def load_game_data(path, Game, xy_fields=(10,10), encode_recipient_role=False, voronoi_area=False, simplified=False, event_based_possession=False, get_position_events=True):
     Game_data = load_game_data_path(path, Game)
 
     events, team_sheets, pitch = read_event_data_xml(os.path.join(
@@ -58,7 +58,7 @@ def load_game_data(path, Game, xy_fields=(10,10), encode_recipient_role=False, v
     )
     GD = GameData_to_df(GD)
     # on-ball events
-    eventdf=split_pass(GD.events, GD.framerate, GD.team_sheets_df)
+    eventdf=split_pass(GD.events, GD.framerate, GD.team_sheets_df, simplified)
     for i in eventdf[eventdf['eID']=='BallClaiming'].index:
         window = eventdf.loc[i-3:i]
         intercepted_idx = window[window['eID'].str.contains('Intercepted')].index
@@ -71,16 +71,21 @@ def load_game_data(path, Game, xy_fields=(10,10), encode_recipient_role=False, v
         on=['pID', 'Frame', 'Session'],
         how='left' 
     )
+    GD.events['ball']=Game
 
     #position events
-    position_events_df=position_events(GD)
-    position_events_df_with_timestamps = utils.add_timestamps(position_events_df, GD.FH_start, GD.SH_start, GD.framerate)
-    GD.events=pd.concat([GD.events,position_events_df_with_timestamps]).sort_values(['Session', 'timestamp']).reset_index(drop=True)
+    if get_position_events:
+        position_events_df=position_events(GD)
+        position_events_df_with_timestamps = utils.add_timestamps(position_events_df, GD.FH_start, GD.SH_start, GD.framerate)
+        GD.events=pd.concat([GD.events,position_events_df_with_timestamps]).sort_values(['Session', 'timestamp']).reset_index(drop=True)
     #marking Game
     GD.events['game']=Game
     #possession
-    GD = label_full_possession(GD)
-    GD = assign_possessionID(GD)
+    if not event_based_possession:
+        GD = label_full_possession(GD)
+        GD = assign_possessionID(GD)
+    else:
+        GD.events=assign_possessionID_event_based(GD.events, Game, team_sheets_df)
     #grid position
     GD.events['Grid Position'] = GD.events.apply(lambda row: utils.get_field_position(row['x'], row['y'], GD.pitch, xy_fields=xy_fields), axis=1)
     GD.positions['Grid Position'] = GD.positions.apply(lambda row: utils.get_field_position(row['x'], row['y'], GD.pitch, xy_fields=xy_fields), axis=1)
@@ -91,8 +96,6 @@ def load_game_data(path, Game, xy_fields=(10,10), encode_recipient_role=False, v
         GD=encode_position(GD)
     if voronoi_area:
         GD.positions=add_voronoi_area(GD.positions, GD.pitch)
-
-    
     return GD
 def get_games(path):
     info_files = [x for x in os.listdir(path) if "matchinformation" in x]
@@ -207,7 +210,7 @@ def GameData_to_df(GD):
     return GD
 
 #on-ball events
-def split_pass(ocel_df, framerate, team_sheets_df):
+def split_pass(ocel_df, framerate, team_sheets_df, simplified=False):
     for ev in ['Pass', 'Cross']:
         pass_mask = ocel_df['eID'].str.endswith(ev)
         pass_events = ocel_df[pass_mask].copy()
@@ -215,10 +218,14 @@ def split_pass(ocel_df, framerate, team_sheets_df):
         successfulpass=pass_received['Evaluation'].str.startswith('successful')
         failedpass=pass_received['Evaluation'].str.startswith('unsuccessful') & pd.notna(pass_received['Recipient'])
 
-        pass_received.loc[successfulpass, 'eID'] = (
-            #pass_received.loc[successfulpass, 'eID'].astype(str) + '_Received'
-            ev + '_Received'
-        )
+        if simplified:
+            pass_received.loc[successfulpass, 'eID'] = (
+                ev + '_Received'
+            )
+        else:
+            pass_received.loc[successfulpass, 'eID'] = (
+                pass_received.loc[successfulpass, 'eID'].astype(str) + '_Received'
+            )
         pass_received.loc[failedpass, 'eID'] = (
             #pass_received.loc[failedpass, 'eID'].astype(str) + '_Intercepted'
             ev + '_Intercepted'
@@ -228,7 +235,7 @@ def split_pass(ocel_df, framerate, team_sheets_df):
         #pass_received['attribute:start_x'] = pass_received['attribute:end_x']
         #pass_received['attribute:start_y'] = pass_received['attribute:end_y']
         pass_received['timestamp'] = pass_received['timestamp'] + pd.to_timedelta(1/framerate, unit="s")#add one frame to the timestamp such that they do not happen at the same time
-        pass_received['Frame']= pass_received['Frame'] + 1  # Increment frame by 1 to avoid same timestamp
+        pass_received['Frame']= pass_received['Frame'] + 5  # Increment frame by 5
         pass_received['gameclock'] = pass_received['gameclock'] + 1/framerate
         pass_received=pass_received[~pass_received['Recipient'].isna()]
 
@@ -236,6 +243,7 @@ def split_pass(ocel_df, framerate, team_sheets_df):
         ocel_df[pass_mask]=pass_events
 
         pass_received['tID']=pass_received['Recipient'].apply(lambda x: utils.get_tID_from_pID(x, team_sheets_df))
+        pass_received['team']=pass_received['Recipient'].apply(lambda x: utils.get_teamside_from_pID(x, team_sheets_df))
         pass_received['Recipient'] = float("nan")
         
         ocel_df = pd.concat([ocel_df, pass_received], ignore_index=True)
@@ -388,6 +396,53 @@ def assign_possessionID(GD):
 
     return GD
 
+def assign_possessionID_event_based(eventdf, Game, team_sheets_df):
+    df = eventdf.copy()
+    possession_ids = []
+    attacking_team=[]
+    defending_team=[]
+    curr_id = 1
+    team= df['Team'].iloc[0]  # Initialize with the first team's name
+    teamID= df['tID'].iloc[0]
+    for idx, row in df.iterrows():
+        change = False
+        eid=row['eID'].lower()
+        
+        for keyword in ['intercepted', 'ballclaiming', 'throwin', 'freekick', 'penalty']:
+            if keyword in eid:
+                change = True
+                break
+        if not change:
+            if idx>0:
+                peid=df.loc[idx-1,'eID'].lower()
+                for keyword in ['scored', 'blockedshot', 'savedshot'
+                                , 'shotwide','othershot', 'refereeball']:
+                    if keyword in peid:
+                        change = True
+                        break
+        if not change:
+            if row['eID'] == 'TacklingGame' and str(row.get('PossessionChange', '')).lower() == 'true':
+                if row['WinnerTeam'] != df.loc[idx - 1, 'tID']:
+                    change = True
+
+        if change:
+            curr_id += 1
+            team = row['Team']
+            teamID=row['tID']
+        possession_ids.append(f"{Game}_{team}_{curr_id}")
+        if teamID==utils.get_tID_from_pID(row['pID'], team_sheets_df):
+            attacking_team.append(row['pID'])
+            defending_team.append(float("nan"))
+        else:
+            attacking_team.append(float("nan"))
+            defending_team.append(row['pID'])
+
+
+    df['possessionID'] = possession_ids
+    df['attacking_team']=attacking_team
+    df['defending_team']=defending_team
+    return df
+
 # pass and cross recipient encoding
 def encode_position(GD):
     #pass_mask = ocel_df['eID'].str.contains('Pass') | ocel_df['eID'].str.contains('Cross')
@@ -418,9 +473,10 @@ def best_pass(current_player, Frame, Session, recipient, GD):
     teammate_scores = utils.calculate_teammate_pass_risk(df, current_player)
     min_value = min(teammate_scores.values())
     min_keys = [k for k, v in teammate_scores.items() if v == min_value]
-    if recipient in min_keys:
-        min_keys.remove(recipient)
-        bp=True
+    if recipient:
+        if recipient in min_keys:
+            min_keys.remove(recipient)
+            bp=True
     passes=list(set([utils.find_position(p, GD) for p in min_keys]))
     passes=['Play_Pass_'+t for t in passes]
     return passes, bp
@@ -456,115 +512,7 @@ def add_pass_enabled(GD):
         best, bp = best_pass(GD.events.at[idx, 'pID'], GD.events.at[idx, 'Frame'], GD.events.at[idx, 'Session'], recipient, GD)
         GD.events.at[idx, 'enabled'] += best
         if bp:
-            GD.event.at[idx, 'best_pass'] += bp
-
-    return GD
-
-
-
-
-
-
-
-# player grouping
-def assign_roles(GD, category='role', role_json_path=None):
-    if not role_json_path:
-        role_json_path=os.path.join(Path(__file__).resolve().parent, "role_groups.json")
-
-    with open(role_json_path, "r", encoding="utf-8") as f:
-        position_groups = json.load(f)
-    if not category:
-        keyset = list({k for v in position_groups.values() for k in v.keys()})
-        for i,k in enumerate(keyset):
-            print(f'{i}: {k}')
-        selection=int(input('Select groupping by index: '))
-        category=keyset[selection]
-
-    def get_group(position_code: str, group_type: str) -> str:
-        info = position_groups.get(position_code, {category: "Unknown"})
-        return info.get(group_type, "Unknown")
-
-    def find_position(player_name: str) -> str:
-        row = GD.team_sheets_df.loc[GD.team_sheets_df["pID"] == player_name, "position"]
-        return row.values[0] if len(row) > 0 else None
-
-    def find_role(player_name: str) -> str:
-        pos = find_position(player_name)
-        return get_group(pos, category) if pos else "Unknown"
-
-    GD.events[category] = GD.events["pID"].apply(find_role)
-    roles = list({v[category] for v in position_groups.values() if category in v})
-    for role in roles:
-        GD.events[role] = GD.events["pID"].where(GD.events[category] == role, None)
-    GD.events = GD.events.copy()
-    return GD
-def assign_multi_roles(GD,categories=None,role_json_path=None):
-    if not role_json_path:
-        role_json_path=os.path.join(Path(__file__).resolve().parent, "role_groups.json")
-
-    with open(role_json_path, "r", encoding="utf-8") as f:
-        position_groups = json.load(f)
-    if not categories:
-        categories = list({k for v in position_groups.values() for k in v.keys()})
-    for category in categories:
-        GD=assign_roles(GD, category, role_json_path)
-    return GD
-
-
-
-# formatting
-import pandas as pd
-
-def formatting(GD):
-    # Drop existing 'Player' column if it exists
-    if 'Player' in GD.events.columns:
-        GD.events = GD.events.drop(columns=['Player'])
-    
-    # Rename columns
-    GD.events.rename(columns={
-        'eID': 'concept:name',
-        'pID': 'Player',
-        'possessionID': 'case:concept:name',
-        'timestamp': 'time:timestamp',
-        'x': 'attribute:x',
-        'y': 'attribute:y',
-        'enabled':'attribute:enabled',
-        'qualifier': 'attribute:qualifier',
-        'gameclock': 'attribute:gameclock',
-        'Session':'attribute:session',
-        'Frame':'attribute:frame',
-        'Team':'attribute:team',
-        'outcome':'attribute:outcome',
-        #'TeamLeft':'attribute:team_left',
-        #'TeamRight':'attribute:team_right',
-        'game':'attribute:game'
-        # 'End X': 'attribute:end_x',
-        # 'End Y': 'attribute:end_y'
-    }, inplace=True)
-
-    # Ensure columns exist before casting
-    # df = GD.events
-    # cast_columns = {
-    #     'case:concept:name': str,
-    #     'concept:name': str,
-    #     #'time:timestamp': 'datetime64[ns]',
-    #     'attribute:x': float,
-    #     'attribute:y': float,
-    #     'Player': str,
-    #     'attribute:team': str,
-    #     'attribute:session': str,
-    #     'attribute:outcome': float,
-    #     'attribute:frame': int,
-    #     'attribute:gameclock': float,
-    #     #'attribute:team_left': str,
-    #     #'attribute:team_right': str,
-    #     'attribute:game': str
-    # }
-
-    # for col, dtype in cast_columns.items():
-    #     if col in df.columns:
-    #         df[col] = df[col].astype(dtype)
-    GD.events['time:timestamp'] = pd.to_datetime(GD.events['time:timestamp'], utc=True)
+            GD.events.at[idx, 'best_pass'] += bp
 
     return GD
 

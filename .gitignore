@@ -14,3 +14,4 @@
 /archieved/*
 /TranslucentActivityRelationships/*
 /trans/*
+*.egg-info/

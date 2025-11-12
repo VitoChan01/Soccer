@@ -32,7 +32,7 @@ def get_tID_from_pID(pID, team_sheets_df):
 
 def get_teamside_from_pID(pID, team_sheets_df):
     """
-    Get the team ID (tID) from a player ID (pID) using the team sheets DataFrame.
+    Get the team side (Home/Away) from a player ID (pID) using the team sheets DataFrame.
     """
     tID = team_sheets_df.loc[team_sheets_df['pID'] == pID, 'Home_Away']
     if not tID.empty:
@@ -133,3 +133,120 @@ def calculate_teammate_pass_risk(df, ball_holder):
 
     return scores
 
+# formatting
+import pandas as pd
+
+def formatting(GD):
+    # Drop existing 'Player' column if it exists
+    if 'Player' in GD.events.columns:
+        GD.events = GD.events.drop(columns=['Player'])
+    
+    # Rename columns
+    GD.events.rename(columns={
+        'eID': 'concept:name',
+        'pID': 'Player',
+        'possessionID': 'case:concept:name',
+        'timestamp': 'time:timestamp',
+        'x': 'attribute:x',
+        'y': 'attribute:y',
+        'enabled':'attribute:enabled',
+        'qualifier': 'attribute:qualifier',
+        'gameclock': 'attribute:gameclock',
+        'Session':'attribute:session',
+        'Frame':'attribute:frame',
+        'Team':'attribute:team',
+        'outcome':'attribute:outcome',
+        #'TeamLeft':'attribute:team_left',
+        #'TeamRight':'attribute:team_right',
+        'game':'attribute:game'
+        # 'End X': 'attribute:end_x',
+        # 'End Y': 'attribute:end_y'
+    }, inplace=True)
+
+    # Ensure columns exist before casting
+    # df = GD.events
+    # cast_columns = {
+    #     'case:concept:name': str,
+    #     'concept:name': str,
+    #     #'time:timestamp': 'datetime64[ns]',
+    #     'attribute:x': float,
+    #     'attribute:y': float,
+    #     'Player': str,
+    #     'attribute:team': str,
+    #     'attribute:session': str,
+    #     'attribute:outcome': float,
+    #     'attribute:frame': int,
+    #     'attribute:gameclock': float,
+    #     #'attribute:team_left': str,
+    #     #'attribute:team_right': str,
+    #     'attribute:game': str
+    # }
+
+    # for col, dtype in cast_columns.items():
+    #     if col in df.columns:
+    #         df[col] = df[col].astype(dtype)
+    GD.events['time:timestamp'] = pd.to_datetime(GD.events['time:timestamp'], utc=True)
+
+    return GD
+
+def filter_players_involved_with_ball(df):
+    """
+    filtering out events where player was not involved in on ball action during the possession.
+    """
+    players_with_ball = (
+        df.dropna(subset=["ball"])
+        .groupby("case:concept:name")["Player"]
+        .unique()
+    )
+
+    merged = df.merge(players_with_ball.rename("eligible_players"),
+                      on="case:concept:name", how="left")
+
+    mask = merged.apply(lambda r: r["Player"] in r["eligible_players"], axis=1)
+    return merged[mask].drop(columns="eligible_players").reset_index(drop=True)
+def idle_players_traces(df):
+    """
+    Activities of idel player.
+    """
+    players_with_ball = (
+        df.dropna(subset=["ball"])
+        .groupby("case:concept:name")["Player"]
+        .unique()
+    )
+
+    merged = df.merge(players_with_ball.rename("eligible_players"),
+                      on="case:concept:name", how="left")
+
+    mask = merged.apply(lambda r: r["Player"] not in r["eligible_players"], axis=1)
+    return merged[mask].drop(columns="eligible_players").reset_index(drop=True)
+
+def add_pass_cross_sequences(df) :
+ 
+    df = df.copy()
+    mask_action = df['concept:name'].str.contains(r'(pass|cross)', case=False, na=False)
+    mask_excluded = df['concept:name'].str.contains(r'(received|intercepted)', case=False, na=False)
+
+    mask_main = mask_action & ~mask_excluded
+    mask_secondary = mask_action & mask_excluded
+
+    df.loc[mask_main, 'seq_main'] = (
+        df.loc[mask_main]
+        .groupby('case:concept:name')
+        .cumcount() + 1
+    )
+
+    df.loc[mask_secondary, 'seq_recv'] = (
+        df.loc[mask_secondary]
+        .groupby('case:concept:name')
+        .cumcount() + 1
+    )
+
+    df.loc[mask_main, 'concept:name'] = (
+        df.loc[mask_main, 'concept:name'] + '_' + df.loc[mask_main, 'seq_main'].astype(int).astype(str)
+    )
+    df.loc[mask_secondary, 'concept:name'] = (
+        df.loc[mask_secondary, 'concept:name'] + '_r' + df.loc[mask_secondary, 'seq_recv'].astype(int).astype(str)
+    )
+
+    df = df.drop(columns=['seq_main', 'seq_recv'], errors='ignore').reset_index(drop=True)
+    return df
