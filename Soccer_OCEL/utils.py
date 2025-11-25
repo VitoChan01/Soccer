@@ -34,7 +34,25 @@ def get_teamside_from_pID(pID, team_sheets_df):
     """
     Get the team side (Home/Away) from a player ID (pID) using the team sheets DataFrame.
     """
-    tID = team_sheets_df.loc[team_sheets_df['pID'] == pID, 'Home_Away']
+    tside = team_sheets_df.loc[team_sheets_df['pID'] == pID, 'Home_Away']
+    if not tside.empty:
+        return tside.values[0]
+    else:
+        return None
+def get_teamside_from_tID(tID, team_sheets_df):
+    """
+    Get the team side (Home/Away) from a team ID (tID) using the team sheets DataFrame.
+    """
+    tside = team_sheets_df.loc[team_sheets_df['tID'] == tID, 'Home_Away']
+    if not tside.empty:
+        return tside.values[0]
+    else:
+        return None
+def get_tID_from_teamside(teamside, team_sheets_df):
+    """
+    Get the team side (Home/Away) from a team ID (tID) using the team sheets DataFrame.
+    """
+    tID = team_sheets_df.loc[team_sheets_df['Home_Away'] == teamside, 'tID']
     if not tID.empty:
         return tID.values[0]
     else:
@@ -250,3 +268,12 @@ def add_pass_cross_sequences(df) :
 
     df = df.drop(columns=['seq_main', 'seq_recv'], errors='ignore').reset_index(drop=True)
     return df
+
+def print_metrics(metrics):
+    for key in metrics.keys():
+        if key=='fitness':
+            print(f"{key}:")
+            for key2 in metrics[key].keys():
+                print(f"  {key2}: {metrics[key][key2]:.3f}")
+        else:
+            print(f"{key}: {metrics[key]:.3f}")
