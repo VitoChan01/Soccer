@@ -3,7 +3,7 @@ import numpy as np
 import os
 from floodlight.io.dfl import read_position_data_xml, read_event_data_xml, read_teamsheets_from_mat_info_xml
 import Soccer_OCEL.utils as utils
-from Soccer_OCEL.trace_events import position_events
+from Soccer_OCEL.trace_events import position_events, movement_events
 from Soccer_OCEL.trace_voronoi import add_voronoi_area
 import json
 
@@ -42,7 +42,7 @@ class GameData:
             "Num Players": len(self.team_sheets_df),
         }
     
-def load_game_data(path, Game, xy_fields=(10,10), encode_recipient_role=False, voronoi_area=False, simplified=False, event_based_possession=False, get_position_events=True):
+def load_game_data(path, Game, xy_fields=(10,10), encode_recipient_role=False, voronoi_area=False, event_based_possession=False, get_position_events=True, pass_direction=False, get_movement_events=True):
     Game_data = load_game_data_path(path, Game)
 
     events, team_sheets, pitch = read_event_data_xml(os.path.join(
@@ -65,13 +65,13 @@ def load_game_data(path, Game, xy_fields=(10,10), encode_recipient_role=False, v
         on=['pID', 'Frame', 'Session'],
         how='left' 
     )
-    eventdf=split_pass(GD.events, GD.framerate, GD.team_sheets_df, positions_df, simplified)
+    eventdf=split_pass(GD.events, GD.framerate, GD.team_sheets_df, positions_df, GD.FH_TeamRight, pass_direction)
     for i in eventdf[eventdf['eID']=='BallClaiming'].index:
         window = eventdf.loc[i-3:i]
         intercepted_idx = window[window['eID'].str.contains('Intercepted')].index
         eventdf = eventdf.drop(intercepted_idx)
     GD.events = eventdf.reset_index(drop=True)
-    GD.events = split_shot(GD.events, GD.framerate, GD.team_sheets_df, GD.FH_TeamRight)
+    GD.events = split_shot(GD.events, GD.framerate, GD.team_sheets_df)
     # GD.events = GD.events.merge( #.drop(columns=['x', 'y'])
     #     positions_df[['pID', 'Frame', 'Session', 'x', 'y']],
     #     on=['pID', 'Frame', 'Session'],
@@ -97,6 +97,8 @@ def load_game_data(path, Game, xy_fields=(10,10), encode_recipient_role=False, v
     #enabled events
     GD=add_pass_enabled(GD)
     #encode recipient role
+    if get_movement_events:
+        GD.positions=movement_events(GD.positions, GD.FH_TeamRight)
     if encode_recipient_role:
         GD=encode_position(GD)
     if voronoi_area:
@@ -216,69 +218,53 @@ def GameData_to_df(GD):
     GD.FH_start=eventdf.query('Session==1').loc[:,'timestamp'].to_list()[0]
     GD.SH_start=eventdf.query('Session==2').loc[:,'timestamp'].to_list()[0]
     GD.positions=utils.add_timestamps(GD.positions, GD.FH_start, GD.SH_start, GD.framerate)
-    GD.balltrace=utils.add_timestamps(ball_df, GD.FH_start, GD.SH_start, GD.framerate)
+    GD.balltrace=utils.add_timestamps(ball_df, GD.FH_start, GD.SH_start, GD.framerate) 
     return GD
 
 #on-ball events
-def split_pass(ocel_df, framerate, team_sheets_df, positions_df, simplified=False, distance_threshold=0.5):
+def split_pass(ocel_df, framerate, team_sheets_df, positions_df, FH_TeamRight, distance_threshold=0.5, pass_direction=False):
     for ev in ['Pass', 'Cross']:
+        ocel_df['pass_distance']=np.zeros(len(ocel_df))
+        ocel_df['pass_angle']=np.zeros(len(ocel_df))
         pass_mask = ocel_df['eID'].str.endswith(ev)
         pass_events = ocel_df[pass_mask].copy()
         pass_received = pass_events.copy()
         successfulpass=pass_received['Evaluation'].str.startswith('successful')
         failedpass=pass_received['Evaluation'].str.startswith('unsuccessful') & pd.notna(pass_received['Recipient'])
+        ocel_df.loc[successfulpass.index[successfulpass], 'outcome'] = 1
+        ocel_df.loc[failedpass.index[failedpass], 'outcome'] = 0
+        pass_events = ocel_df[pass_mask].copy()
+        pass_received = pass_events.copy()
 
-        if simplified:
-            pass_received.loc[successfulpass, 'eID'] = (
-                ev + '_Received'
-            )
-        else:
-            pass_received.loc[successfulpass, 'eID'] = (
-                pass_received.loc[successfulpass, 'eID'].astype(str) + '_Received'
-            )
+        # if simplified:
+        pass_received.loc[successfulpass, 'eID'] = (
+            ev + '_Received'
+        )
+        # else:
+        #     pass_received.loc[successfulpass, 'eID'] = (
+        #         pass_received.loc[successfulpass, 'eID'].astype(str) + '_Received'
+        #     )
         pass_received.loc[failedpass, 'eID'] = (
             #pass_received.loc[failedpass, 'eID'].astype(str) + '_Intercepted'
             ev + '_Intercepted'
         )
-
-        def compute_pass_metrics(pass_df, FH_TeamRight):
-            dx = pass_df['end_x'] - pass_df['x']
-            dy = pass_df['end_y'] - pass_df['y']
-            
-            pass_df['pass_distance'] = np.sqrt(dx**2 + dy**2)
-            
-            # Angle (in degrees, 0 = horizontal to right, counter-clockwise)
-            pass_df['pass_angle'] = np.degrees(np.arctan2(dy, dx))
-            
-            def get_attacking_direction(row):
-                team = row['Team']
-                session = row['Session']
-                if session == 1:
-                    attacking_right = (team == FH_TeamRight)
-                else:
-                    attacking_right = (team != FH_TeamRight) 
-                
-                if attacking_right:
-                    return 'Forward' if row['end_x'] - row['x'] > 0 else 'Backward'
-                else:  
-                    return 'Forward' if row['end_x'] - row['x'] < 0 else 'Backward'
-            
-            pass_df['pass_direction'] = pass_df.apply(get_attacking_direction, axis=1)
-            
-            pass_df['eID'] = pass_df['eID'] + '_' + pass_df['pass_direction']
-            
-            return pass_df
 
         for idx, row in pass_received.iterrows():
             recipient = row['Recipient']
             if pd.isna(recipient):
                 continue
             start_frame = row['Frame']
+            session = row['Session']
             
             recipient_positions = positions_df[(positions_df['pID'] == recipient) &
-                                            (positions_df['Frame'] >= start_frame)].copy()
+                                    (positions_df['Session'] == session)&
+                                    (positions_df['Frame'] >= start_frame)&
+                                    (positions_df['Frame'] <= start_frame+framerate*15)].copy()
             
             if recipient_positions.empty:
+                pass_received.loc[idx,'timestamp'] = pass_received.loc[idx,'timestamp'] + pd.to_timedelta(1/framerate, unit="s")#add one frame to the timestamp such that they do not happen at the same time
+                pass_received.loc[idx,'Frame']= pass_received.loc[idx,'Frame'] + 5  # Increment frame by 5
+                pass_received.loc[idx,'gameclock'] = pass_received.loc[idx,'gameclock'] + 1/framerate
                 continue 
             # recipient_positions['distance_to_ball'] = np.sqrt(
             #     (recipient_positions['x'] - recipient_positions['ball_x'])**2 +
@@ -288,14 +274,36 @@ def split_pass(ocel_df, framerate, team_sheets_df, positions_df, simplified=Fals
             # received_event = recipient_positions[recipient_positions['distance_to_ball'] <= distance_threshold]
             received_event = recipient_positions[recipient_positions['Dist_ball'] <= distance_threshold]
             if received_event.empty:
+                pass_received.loc[idx,'timestamp'] = pass_received.loc[idx,'timestamp'] + pd.to_timedelta(1/framerate, unit="s")#add one frame to the timestamp such that they do not happen at the same time
+                pass_received.loc[idx,'Frame']= pass_received.loc[idx,'Frame'] + 5  # Increment frame by 5
+                pass_received.loc[idx,'gameclock'] = pass_received.loc[idx,'gameclock'] + 1/framerate
                 continue 
 
-            received_row = received_event.iloc[0]
-            pass_received.at[idx, 'Frame'] = received_row['Frame']
-            pass_received.at[idx, 'timestamp'] = positions_df.at[received_row.name, 'timestamp'] if 'timestamp' in positions_df.columns else row['timestamp']
-            pass_received.at[idx, 'gameclock'] = positions_df.at[received_row.name, 'gameclock'] if 'gameclock' in positions_df.columns else row['gameclock']
-            pass_received.at[idx, 'x'] = received_row['ball_x']
-            pass_received.at[idx, 'y'] = received_row['ball_y']
+            received_row = received_event.loc[received_event['Dist_ball'].idxmin()]
+            #if row['Evaluation'].startswith('successful'):
+            dx = received_row['ball_x'] - row['x']
+            dy = received_row['ball_y'] - row['y']
+            distance=np.sqrt(dx**2 + dy**2)
+            pass_events.loc[idx,'pass_distance'] = distance
+            pass_events.loc[idx,'pass_angle'] = np.degrees(np.arctan2(dy, dx))
+            if pass_direction & pass_events.loc[idx,'eID'].startswith('Play'):
+                team = row['Team']
+                if session == 1:
+                    attacking_right = (team == FH_TeamRight)
+                else:
+                    attacking_right = (team != FH_TeamRight)
+
+                direction = 'Forward' if (dx > 0 and attacking_right) or (dx < 0 and not attacking_right) else 'Backward'
+                pass_dis = row['Distance']#'Short' if distance<15 else 'Long'
+                new_ev=direction + '_' + pass_dis + '_' + ev
+                pass_events.loc[idx,'eID'] = new_ev
+
+
+            pass_received.loc[idx,'Frame'] = received_row['Frame']
+            pass_received.loc[idx,'timestamp'] = received_row['timestamp'] 
+            pass_received.loc[idx,'gameclock'] = received_row['gameclock'] 
+            pass_received.loc[idx,'x'] = received_row['ball_x']
+            pass_received.loc[idx,'y'] = received_row['ball_y']
         
         
         pass_received['pID']=pass_received['Recipient']
@@ -306,7 +314,6 @@ def split_pass(ocel_df, framerate, team_sheets_df, positions_df, simplified=Fals
         #pass_received['Frame']= pass_received['Frame'] + 5  # Increment frame by 5
         #pass_received['gameclock'] = pass_received['gameclock'] + 1/framerate
         pass_received=pass_received[~pass_received['Recipient'].isna()]
-        pass_events['eID']=ev
         ocel_df[pass_mask]=pass_events
 
         pass_received['tID']=pass_received['Recipient'].apply(lambda x: utils.get_tID_from_pID(x, team_sheets_df))
@@ -472,16 +479,18 @@ def assign_possessionID_event_based(eventdf, Game, team_sheets_df):
     possession_ids = []
     attacking_team=[]
     defending_team=[]
-    curr_id = 1
+    curr_id = 0
     team= df['Team'].iloc[0]  # Initialize with the first team's name
     teamID= df['tID'].iloc[0]
     for idx, row in df.iterrows():
         change = False
         eid=row['eID'].lower()
         
-        for keyword in ['intercepted', 'ballclaiming', 'freekick', 'penalty', 'fairplay']:
+        for keyword in ['intercepted', 'ballclaiming', 'freekick'
+                        , 'penalty', 'fairplay', 'goalkick'
+                        , 'throwin', 'cornerkick', 'kickoff']:
             if keyword in eid:
-                if ('notawarded' not in eid) and (eid!='throwin_play_pass_received'):
+                if ('notawarded' not in eid) and ('received' not in eid):
                     change = True
                     break
         if not change:
@@ -492,10 +501,10 @@ def assign_possessionID_event_based(eventdf, Game, team_sheets_df):
                     if keyword in peid:
                         change = True
                         break
-        if not change and (idx+1)<len(df):
-            neid=df.loc[idx+1,'eID'].lower()
-            if neid=='throwin_play_pass_received':
-                change = True
+        # if not change and (idx+1)<len(df):
+        #     neid=df.loc[idx+1,'eID'].lower()
+        #     if neid=='throwin_play_pass_received':
+        #         change = True
         
         if not change:
             if row['eID'] == 'TacklingGame' and str(row.get('PossessionChange', '')).lower() == 'true':

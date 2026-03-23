@@ -1,6 +1,8 @@
 from scipy.signal import savgol_filter, find_peaks
 import numpy as np
 import pandas as pd
+from shapely.geometry import LineString
+import geopandas as gpd
 
 def position_events(GameData):
     field_y=GameData.pitch.ylim[1]
@@ -63,6 +65,7 @@ def player_repositioning(player, positions_df, FH_TeamSide, field_y, field_x
                               , 'y':y_travels[0]
                               , 'end_x':x_travels[-1]
                               , 'end_y':y_travels[-1]
+                              , 'trajectory': LineString(zip(x_travels, y_travels))
                               })
 
         seg_df = pd.DataFrame(seg_stats)
@@ -128,3 +131,111 @@ def annotate_movement(dx, start_y, end_y, start_x, end_x, TeamSide, movement_dir
             return end_position+' Transition'
         else:
             return 'Lateral Repositioning'
+
+def movement_events(positions_df, FH_TeamRight):
+    gdf = gpd.GeoDataFrame(
+        positions_df,
+        geometry=gpd.points_from_xy(positions_df["x"], positions_df["y"])
+    )
+    gdf['ball_loc']=gpd.GeoSeries.from_xy(positions_df["ball_x"], positions_df["ball_y"])
+    gdf["Dist_ball"] = gdf.geometry.distance(gdf["ball_loc"])
+
+    gdf = gdf.sort_values(["Player", "timestamp"])
+
+    next_geom = gdf.groupby(["Player", "Session"])["geometry"].shift(-1)
+
+    gdf["movement"] = gdf.geometry.distance(next_geom)
+
+    dx = next_geom.x - gdf.geometry.x
+    dy = next_geom.y - gdf.geometry.y
+    gdf["dx"] = dx
+    gdf["dy"] = dy
+
+    gdf["angle"] = np.arctan2(gdf["dy"], gdf["dx"])
+    gdf["angle"] = (np.degrees(gdf["angle"]) + 360) % 360
+    mask = (gdf["dx"] == 0) & (gdf["dy"] == 0)
+    gdf.loc[mask, "angle"] = None
+
+    mask = (
+        ((gdf["Team"] == FH_TeamRight) & (gdf["Session"] == 1)) |
+        ((gdf["Team"] != FH_TeamRight) & (gdf["Session"] == 2))
+    )
+    gdf["angle_attacking"] = gdf["angle"]
+    gdf.loc[mask, "angle_attacking"] = (gdf.loc[mask, "angle_attacking"] + 180) % 360
+
+    bins = [0, 22.5, 67.5, 112.5, 157.5, 202.5, 247.5, 292.5, 337.5, 360]
+
+    labels = [
+        "Forward",
+        "Forward-Right",
+        "Right",
+        "Backward-Right",
+        "Backward",
+        "Backward-Left",
+        "Left",
+        "Forward-Left",
+        "Forward"
+    ]
+
+    gdf["dir_8"] = pd.cut(
+        gdf["angle_attacking"],
+        bins=bins,
+        labels=labels,
+        include_lowest=True,
+        right=False,
+        ordered=False
+    )
+
+    labels = [0,1,2,3,4,5,6,7,0]
+
+    gdf["dir_8_num"] = pd.cut(
+        gdf["angle_attacking"],
+        bins=bins,
+        labels=labels,
+        include_lowest=True,
+        right=False,
+        ordered=False
+    ).astype("Int64")
+
+
+    bins = [0, 11.25,33.75,56.25,78.75,101.25,123.75,146.25,168.75,191.25,213.75,236.25,258.75,281.25,303.75,326.25,348.75,360]
+    labels = [
+        "Forward",
+        "Slight Forward-Right",
+        "Forward-Right",
+        "Strong Forward-Right",
+        "Right",
+        "Strong Backward-Right",
+        "Backward-Right",
+        "Slight Backward-Right",
+        "Backward",
+        "Slight Backward-Left",
+        "Backward-Left",
+        "Strong Backward-Left",
+        "Left",
+        "Strong Forward-Left",
+        "Forward-Left",
+        "Slight Forward-Left",
+        "Forward"
+    ]
+
+    gdf["dir_16"] = pd.cut(
+        gdf["angle_attacking"],
+        bins=bins,
+        labels=labels,
+        include_lowest=True,
+        right=False,
+        ordered=False
+    )
+
+    labels = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,0]
+
+    gdf["dir_16_num"] = pd.cut(
+        gdf["angle_attacking"],
+        bins=bins,
+        labels=labels,
+        include_lowest=True,
+        right=False,
+        ordered=False
+    ).astype("Int64")
+    return gdf

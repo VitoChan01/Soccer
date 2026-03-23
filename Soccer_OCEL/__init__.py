@@ -6,3 +6,4 @@ from . import trace_events
 from . import trace_voronoi
 from . import utils
 from . import role_objects
+from . import isolation_forest
