@@ -132,19 +132,40 @@ def annotate_movement(dx, start_y, end_y, start_x, end_x, TeamSide, movement_dir
         else:
             return 'Lateral Repositioning'
 
-def movement_events(positions_df, FH_TeamRight):
+def movement_events(positions_df, FH_TeamRight, pitch, movement_directions=None, step=3, max_gap=None, movement_noise_threshold=0.09):
+    '''
+    Step: subseting the df by n step. 
+    '''
+
+    x_min, x_max = pitch.xlim[0],pitch.xlim[1]
+    y_min, y_max = pitch.ylim[0],pitch.ylim[1]
+    tolerance=0
+
+    positions_df = positions_df[
+        (positions_df["x"] >= x_min-tolerance) & (positions_df["x"] <= x_max+tolerance) &
+        (positions_df["y"] >= y_min-tolerance) & (positions_df["y"] <= y_max+tolerance)
+    ]
+
     gdf = gpd.GeoDataFrame(
         positions_df,
         geometry=gpd.points_from_xy(positions_df["x"], positions_df["y"])
     )
-    gdf['ball_loc']=gpd.GeoSeries.from_xy(positions_df["ball_x"], positions_df["ball_y"])
+    gdf = gdf.sort_values(["Player", "Session", "Frame"]).reset_index(drop=True)
+    gdf['ball_loc']=gpd.GeoSeries.from_xy(gdf["ball_x"], gdf["ball_y"])
     gdf["Dist_ball"] = gdf.geometry.distance(gdf["ball_loc"])
 
-    gdf = gdf.sort_values(["Player", "timestamp"])
-
+    if step:
+        gdf['Frame_drop']=gdf['Frame']%step
+        gdf=gdf.query('Frame_drop==0').copy()
+        gdf.drop(['x','y','ball_x','ball_y','Frame_drop'], axis=1, inplace=True)
+    else:
+        gdf.drop(['x','y','ball_x','ball_y'], axis=1, inplace=True)
+    gdf = gdf.reset_index(drop=True)
     next_geom = gdf.groupby(["Player", "Session"])["geometry"].shift(-1)
 
     gdf["movement"] = gdf.geometry.distance(next_geom)
+    gdf = gdf[(gdf["movement"].notna())].copy()
+    gdf = gdf[gdf["movement"] > movement_noise_threshold]
 
     dx = next_geom.x - gdf.geometry.x
     dy = next_geom.y - gdf.geometry.y
@@ -162,80 +183,166 @@ def movement_events(positions_df, FH_TeamRight):
     )
     gdf["angle_attacking"] = gdf["angle"]
     gdf.loc[mask, "angle_attacking"] = (gdf.loc[mask, "angle_attacking"] + 180) % 360
-
-    bins = [0, 22.5, 67.5, 112.5, 157.5, 202.5, 247.5, 292.5, 337.5, 360]
-
-    labels = [
-        "Forward",
-        "Forward-Right",
-        "Right",
-        "Backward-Right",
-        "Backward",
-        "Backward-Left",
-        "Left",
-        "Forward-Left",
-        "Forward"
-    ]
-
-    gdf["dir_8"] = pd.cut(
-        gdf["angle_attacking"],
-        bins=bins,
-        labels=labels,
-        include_lowest=True,
-        right=False,
-        ordered=False
-    )
-
-    labels = [0,1,2,3,4,5,6,7,0]
-
-    gdf["dir_8_num"] = pd.cut(
-        gdf["angle_attacking"],
-        bins=bins,
-        labels=labels,
-        include_lowest=True,
-        right=False,
-        ordered=False
-    ).astype("Int64")
-
-
-    bins = [0, 11.25,33.75,56.25,78.75,101.25,123.75,146.25,168.75,191.25,213.75,236.25,258.75,281.25,303.75,326.25,348.75,360]
-    labels = [
-        "Forward",
-        "Slight Forward-Right",
-        "Forward-Right",
-        "Strong Forward-Right",
-        "Right",
-        "Strong Backward-Right",
-        "Backward-Right",
-        "Slight Backward-Right",
-        "Backward",
-        "Slight Backward-Left",
-        "Backward-Left",
-        "Strong Backward-Left",
-        "Left",
-        "Strong Forward-Left",
-        "Forward-Left",
-        "Slight Forward-Left",
-        "Forward"
-    ]
-
-    gdf["dir_16"] = pd.cut(
-        gdf["angle_attacking"],
-        bins=bins,
-        labels=labels,
-        include_lowest=True,
-        right=False,
-        ordered=False
-    )
-
-    labels = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,0]
-
-    gdf["dir_16_num"] = pd.cut(
-        gdf["angle_attacking"],
-        bins=bins,
-        labels=labels,
-        include_lowest=True,
-        right=False,
-        ordered=False
-    ).astype("Int64")
+    
+    gdf = attack_angle_to_dir(gdf, movement_directions)
+    gdf = label_aggregation(gdf,step , max_gap)
     return gdf
+
+def attack_angle_to_dir(gdf, movement_directions=None):
+    if movement_directions==16:
+        bins = [0, 11.25,33.75,56.25,78.75,101.25,123.75,146.25,168.75,191.25,213.75,236.25,258.75,281.25,303.75,326.25,348.75,360]
+        labels = [
+            "Forward",
+            "Slight Forward-Right",
+            "Forward-Right",
+            "Strong Forward-Right",
+            "Right",
+            "Strong Backward-Right",
+            "Backward-Right",
+            "Slight Backward-Right",
+            "Backward",
+            "Slight Backward-Left",
+            "Backward-Left",
+            "Strong Backward-Left",
+            "Left",
+            "Strong Forward-Left",
+            "Forward-Left",
+            "Slight Forward-Left",
+            "Forward"
+        ]
+
+        gdf["eID"] = pd.cut(
+            gdf["angle_attacking"],
+            bins=bins,
+            labels=labels,
+            include_lowest=True,
+            right=False,
+            ordered=False
+        )
+
+        labels = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,0]
+
+        gdf["dir_16_num"] = pd.cut(
+            gdf["angle_attacking"],
+            bins=bins,
+            labels=labels,
+            include_lowest=True,
+            right=False,
+            ordered=False
+        ).astype("Int64")
+    else:
+        bins = [0, 22.5, 67.5, 112.5, 157.5, 202.5, 247.5, 292.5, 337.5, 360]
+        labels = [
+            "Forward",
+            "Forward-Right",
+            "Right",
+            "Backward-Right",
+            "Backward",
+            "Backward-Left",
+            "Left",
+            "Forward-Left",
+            "Forward"
+        ]
+
+        gdf["eID"] = pd.cut(
+            gdf["angle_attacking"],
+            bins=bins,
+            labels=labels,
+            include_lowest=True,
+            right=False,
+            ordered=False
+        )
+        labels = [0,1,2,3,4,5,6,7,0]
+        gdf["dir_8_num"] = pd.cut(
+            gdf["angle_attacking"],
+            bins=bins,
+            labels=labels,
+            include_lowest=True,
+            right=False,
+            ordered=False
+        ).astype("Int64")
+        gdf=gdf.rename(columns={"Player":"pID"})
+    return gdf
+
+def circular_mean(series):
+    angles = series.dropna()
+    if len(angles) == 0:
+        return np.nan
+    radians = np.radians(angles)
+    return np.degrees(
+        np.arctan2(np.mean(np.sin(radians)), np.mean(np.cos(radians)))
+    ) % 360
+
+def label_aggregation(gdf, step, max_gap=None):
+    '''
+    max_gap is prioritized over step. If max_gap is None, step will be used. If max_gap==-1(/<0), identical events will be aggregated regardless of frame brake.
+    '''
+    if max_gap:
+        pass
+    elif step:
+        if step>5:
+            max_gap=step
+        else:
+            max_gap=10
+    else:
+        max_gap=10
+    gdf = gdf.sort_values(["pID", "Session", "Frame"]).copy()
+    frame_gap = gdf.groupby(["pID", "Session"])["Frame"].diff()
+
+    gdf["segment_id"] = (
+        (gdf["eID"] != gdf["eID"].shift()) |
+        (gdf["pID"] != gdf["pID"].shift()) |
+        (gdf["Session"] != gdf["Session"].shift()) |
+        (frame_gap > max_gap)
+    ).cumsum()
+
+    if max_gap<0:
+        gdf["segment_id"] = (
+            (gdf["eID"] != gdf["eID"].shift()) |
+            (gdf["pID"] != gdf["pID"].shift()) |
+            (gdf["Session"] != gdf["Session"].shift())
+            ).cumsum()
+
+    agg_dict = {
+        "Frame": ["first", "last"],
+        "movement": "sum",
+        "dx": "sum",
+        "dy": "sum",
+        "angle": circular_mean,
+        'angle_attacking': circular_mean
+    }
+
+    other_cols = [
+        col for col in gdf.columns
+        if col not in ["Frame", "movement", "dx", "dy", "angle",
+                    "pID", "Session", "eID", "segment_id"]
+    ]
+
+    for col in other_cols:
+        agg_dict[col] = "first"
+
+    result = (
+        gdf.groupby(
+            ["pID", "Session", "eID", "segment_id"],
+            observed=True,
+            as_index=False,
+            sort=False  # preserve segment order
+        )
+        .agg(agg_dict)
+    )
+    result.columns = [
+        "_".join(col).strip("_") if isinstance(col, tuple) else col
+        for col in result.columns
+    ]
+
+    result = result.rename(columns={
+        "Frame_first": "Frame",
+        "Frame_last": "end_frame"
+    })
+    result["duration_frame"] = result["end_frame"] - result["Frame"]+1
+
+    result = result.drop(columns="segment_id")
+    result.columns = [col.replace("_first", "") for col in result.columns]
+    result.columns = [col.replace("_sum", "") for col in result.columns]
+    result.columns = [col.replace("_circular_mean", "") for col in result.columns]
+    return result
