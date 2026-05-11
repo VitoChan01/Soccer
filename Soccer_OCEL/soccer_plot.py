@@ -111,9 +111,11 @@ def fastplot(gdf):
     base=field_gdf.plot(facecolor="none", edgecolor="black", linewidth=2)
     #base = field_gdf.boundary.plot(color="black", linewidth=2)
     gdf.plot(ax=base)
-def background():
+def plot_background():
     base=field_gdf.plot(facecolor="none", edgecolor="black", linewidth=2)
     return base
+def plot_background_ax(ax):
+    field_gdf.plot(ax=ax, facecolor="none", edgecolor="black", linewidth=2)
 def plot_trace(gdf, base, color):
     gdf.plot(ax=base, edgecolor=color)
 
