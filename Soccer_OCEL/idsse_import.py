@@ -12,17 +12,16 @@ import json
 class GameData:
     def __init__(self, Game, events, positions, team_sheets_df,
                   pitch, possession, ballstatus, framerate, 
-                  home_tID, away_tID, settings=None, positional_events=None, balltrace=None,
-                  movements=None, FH_start=None, SH_start=None, 
+                  home_tID, away_tID, settings=None, positional_events=None, movement_events=None, balltrace=None, FH_start=None, SH_start=None, 
                   FH_TeamRight=None):
         self.Game = Game
         self.events = events
         self.positional_events = positional_events
+        self.movement_events = movement_events
         self.positions = positions
         self.team_sheets_df = team_sheets_df
         self.pitch = pitch
         self.possession = possession
-        self.movements=movements
         self.ballstatus = ballstatus
         self.framerate = framerate
         self.home_tID = home_tID
@@ -45,7 +44,25 @@ class GameData:
             "Num Players": len(self.team_sheets_df),
             'settings': self.settings
         }
-    
+    def join_events(self, log='ALL'):
+        if log == 'ALL':
+            df =  pd.concat([self.movement_events, self.positional_events])
+        elif log == 'MOVEMENT':
+            df = self.movement_events
+        elif log == 'POSITIONAL':
+            df = self.positional_events
+        self.events=pd.concat([self.events, df])
+        self.events=self.events.sort_values(["Session", "Frame"])
+        return self
+    def format_log(self, log='EVENTS', rename_dic=None):
+        if log == 'EVENTS':
+            df = self.events
+        elif log == 'POSITIONAL':
+            df = self.positional_events
+        elif log == 'MOVEMENT':
+            df = self.movement_events
+        df = utils.formatting(df, rename_dic)
+        return self   
 def load_game_data(path, Game, xy_fields=(10,10), encode_recipient_role=False, voronoi_area=False, event_based_possession=False, get_position_events=True, pass_direction=False, get_movement_events=True, movement_directions=None, movement_step=None, movement_max_gap=None, movement_noise_threshold=0.09):
     Game_data = load_game_data_path(path, Game)
     settings={'encode_recipient_role': encode_recipient_role, 'voronoi_area': voronoi_area, 'event_based_possession': event_based_possession, 'get_position_events': get_position_events, 'pass_direction': pass_direction, 'get_movement_events': get_movement_events, 'movement_directions': movement_directions, 'movement_step':movement_step, 'movement_max_gap': movement_max_gap, 'movement_noise_threshold':movement_noise_threshold}
@@ -86,19 +103,24 @@ def load_game_data(path, Game, xy_fields=(10,10), encode_recipient_role=False, v
         GD = assign_possessionID(GD)
     else:
         GD.events=assign_possessionID_event_based(GD.events, Game, team_sheets_df)
-
-    #position events
-    position_events_df=position_events(GD)
-    position_events_df_with_timestamps = utils.add_timestamps(position_events_df, GD.FH_start, GD.SH_start, GD.framerate)
-    GD.events=pd.concat([GD.events,position_events_df_with_timestamps]).sort_values(['Session', 'timestamp']).reset_index(drop=True)
-    #marking Game
     GD.events['game']=Game
+    #position events
+    if get_position_events:
+        position_events_df=position_events(GD)
+        position_events_df_with_timestamps = utils.add_timestamps(position_events_df, GD.FH_start, GD.SH_start, GD.framerate)
+        GD.events['game']=Game
+        #possession matching
+        GD.positional_events=frame_possessionID_matching(GD.events, position_events_df_with_timestamps)
+        GD.positional_events['Grid Position'] = GD.positional_events.apply(lambda row: utils.get_field_position(row['x'], row['y'], GD.pitch, xy_fields=xy_fields), axis=1)
+    #movement events
     if get_movement_events:
-        GD.movements=movement_events(GD.positions, GD.FH_TeamRight, GD.pitch, movement_directions, movement_step, movement_max_gap, movement_noise_threshold)
-        GD.events=pd.concat([GD.events,GD.movements]).sort_values(['Session', 'Frame','pID']).reset_index(drop=True)
-        GD.events = GD.events.dropna(subset=["eID"]).reset_index(drop=True)
-    #possession matching
-    GD.events=frame_possessionID_matching(GD.events)
+        GD.movement_events=movement_events(GD.positions, GD.FH_TeamRight, GD.pitch, movement_directions, movement_step, movement_max_gap, movement_noise_threshold)
+        GD.movement_events = utils.add_timestamps(GD.movement_events, GD.FH_start, GD.SH_start, GD.framerate)
+        GD.events['game']=Game
+        #possession matching
+        GD.movement_events=frame_possessionID_matching(GD.events, GD.movement_events)
+        GD.movement_events['Grid Position'] = GD.movement_events.apply(lambda row: utils.get_field_position(row['x'], row['y'], GD.pitch, xy_fields=xy_fields), axis=1)
+
     #grid position
     GD.events['Grid Position'] = GD.events.apply(lambda row: utils.get_field_position(row['x'], row['y'], GD.pitch, xy_fields=xy_fields), axis=1)
     GD.positions['Grid Position'] = GD.positions.apply(lambda row: utils.get_field_position(row['x'], row['y'], GD.pitch, xy_fields=xy_fields), axis=1)
@@ -109,9 +131,6 @@ def load_game_data(path, Game, xy_fields=(10,10), encode_recipient_role=False, v
         GD=encode_position(GD)
     if voronoi_area:
         GD.positions=add_voronoi_area(GD.positions, GD.pitch)
-    GD.positional_events=GD.events[GD.events['ball'].isna()]
-    if not get_position_events:
-        GD.events=GD.events[~GD.events['ball'].isna()]
     return GD
 def get_games(path):
     info_files = [x for x in os.listdir(path) if "matchinformation" in x]
@@ -551,7 +570,7 @@ def assign_possessionID_event_based(eventdf, Game, team_sheets_df):
     return df
 
 
-def frame_possessionID_matching(df):
+def frame_possessionID_matching_singleDF(df):
     df = df.sort_values(["Session", "Frame"])
     possession_map = (
         df[df["possessionID"].notna()]
@@ -571,6 +590,36 @@ def frame_possessionID_matching(df):
 
     df["possessionID"] = df.apply(assign_possession, axis=1)
     return df
+
+import pandas as pd
+
+def frame_possessionID_matching(df_withID, df_withoutID):
+    possession_map = (
+        df_withID[df_withID["possessionID"].notna()]
+        .groupby(["Session", "possessionID"])["Frame"]
+        .min()
+        .reset_index()
+        .rename(columns={"Frame": "start_frame"})
+        .sort_values(["Session", "start_frame"])
+    )
+
+    def assign_possession(row):
+        session_map = possession_map[
+            possession_map["Session"] == row["Session"]
+        ]
+
+        active = session_map[
+            session_map["start_frame"] <= row["Frame"]
+        ]
+
+        if active.empty:
+            return None
+
+        return active.iloc[-1]["possessionID"]
+
+    result = df_withoutID.copy()
+    result["possessionID"] = result.apply(assign_possession, axis=1)
+    return result
 
 # pass and cross recipient encoding
 def encode_position(GD):

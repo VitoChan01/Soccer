@@ -2,6 +2,9 @@ from shapely.geometry import Polygon, LineString, Point
 import geopandas as gpd
 from adjustText import adjust_text
 from matplotlib.lines import Line2D
+from matplotlib.animation import FuncAnimation
+import matplotlib.pyplot as plt
+import numpy as np
 length = 105
 width = 68
 penalty_depth = 16.5
@@ -142,3 +145,62 @@ def add_event(df, ax, color):
         texts.append(t)
     
     adjust_text(texts, ax=ax)
+
+
+def vis_possession(GameData, possessionID):
+    df=GameData.events.query('`case:concept:name`==@possessionID')
+    start_frame, end_frame, session=np.min(df['attribute:frame']),np.max(df['attribute:frame']),np.unique(df['attribute:session'])[0]
+    print(start_frame, end_frame, session)
+    ball=GameData.positions.query('`Frame`>=@start_frame & `Frame`<=@end_frame')
+    extract_ball=np.unique(ball['Player'])[0]
+    ball=ball.query('Player==@extract_ball')[['ball_x','ball_y']]
+    ball = gpd.GeoDataFrame(
+        ball,
+        geometry=gpd.points_from_xy(ball["ball_x"], ball["ball_y"])
+    )
+    ball_line = gpd.GeoDataFrame(
+        geometry=[LineString(zip(ball["ball_x"], ball["ball_y"]))]
+    )
+    h_df=gpd.GeoDataFrame(df.query('`attribute:team`=="Home"'),
+        geometry=GameData.events['trajectory'])
+    a_df=gpd.GeoDataFrame(df.query('`attribute:team`=="Away"'),
+        geometry=GameData.events['trajectory'])
+
+    frames = end_frame-start_frame
+    session_df=GameData.positions[GameData.positions["Session"] == session]
+
+    fig, ax = plt.subplots()
+    def update(frame):
+        ax.clear()
+        ax.plot(ax=ax)
+        field_gdf.plot(ax=ax, facecolor="none", edgecolor="black", linewidth=2)
+
+        past = session_df[session_df["Frame"] < frame]
+        if len(past)!=0:
+            home = past[past["Team"] == "Home"]
+            away = past[past["Team"] == "Away"]
+            
+            ax.scatter(home["x"], home["y"], color="steelblue", s=0.1)
+            ax.scatter(away["x"], away["y"], color="indianred", s=0.1)
+            ax.scatter(home["ball_x"], home["ball_y"], color="green", s=0.1)
+        
+        
+        current = session_df[session_df["Frame"] == frame]
+        
+        home = current[current["Team"] == "Home"]
+        away = current[current["Team"] == "Away"]
+        
+        ax.scatter(home["x"], home["y"], color="steelblue", s=50)
+        ax.scatter(away["x"], away["y"], color="indianred", s=50)
+        ax.scatter(current["ball_x"].iloc[0], current["ball_y"].iloc[0], edgecolor="black", color="green", s=30)
+        add_legend(ax)
+        a_events=a_df.query('`attribute:frame`<=@frame & ball.notna()')
+        h_events=h_df.query('`attribute:frame`<=@frame & ball.notna()')
+        if len(a_events)!=0:
+            add_event(a_events, ax, "#a84848")
+        if len(h_events)!=0:
+            add_event(h_events, ax, "#4878a8")
+        ax.set_title(f"Frame {frame}")
+
+    ani = FuncAnimation(fig, update, frames=frames, interval=90)
+    ani.save("match.gif", writer="pillow")

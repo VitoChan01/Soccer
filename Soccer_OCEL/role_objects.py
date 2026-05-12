@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 import pandas as pd
 # player grouping
-def assign_roles(GD, team=False, category='role', role_json_path=None):
+def assign_roles(GD, process_DF='ALL', team=False, category='role', role_json_path=None):
     if not role_json_path:
         role_json_path=os.path.join(Path(__file__).resolve().parent, "role_groups.json")
 
@@ -28,20 +28,27 @@ def assign_roles(GD, team=False, category='role', role_json_path=None):
         pos = find_position(player_name)
         return get_group(pos, category) if pos else "Unknown"
 
-    GD.events[category] = GD.events["pID"].apply(find_role)
-    roles = list({v[category] for v in position_groups.values() if category in v})
+    def processing(df, category):
+        df[category] = df["pID"].apply(find_role)
+        roles = list({v[category] for v in position_groups.values() if category in v})
 
-    if team:
+        if team:
+            for role in roles:
+                df[f"{role}_h"] = df["pID"].where(
+                    (df[category] == role) & (df["Team"] == "Home"), None
+                )
+                df[f"{role}_a"] = df["pID"].where(
+                    (df[category] == role) & (df["Team"] == "Away"), None
+                )
         for role in roles:
-            GD.events[f"{role}_h"] = GD.events["pID"].where(
-                (GD.events[category] == role) & (GD.events["Team"] == "Home"), None
-            )
-            GD.events[f"{role}_a"] = GD.events["pID"].where(
-                (GD.events[category] == role) & (GD.events["Team"] == "Away"), None
-            )
-    for role in roles:
-        GD.events[role] = GD.events["pID"].where(GD.events[category] == role, None)
-        
+            df[role] = df["pID"].where(df[category] == role, None)
+        return df
+    if process_DF=='EVENTS' or process_DF == "ALL":
+        GD.events=processing(GD.events, category)
+    if process_DF=='POSITIONAL' or process_DF == "ALL":
+        GD.positional_events=processing(GD.positional_events, category)
+    if process_DF=='MOVEMENT' or process_DF == "ALL":
+        GD.movement_events=processing(GD.movement_events, category)
     #GD.events.drop(category, axis=1, inplace=True)
 
     
@@ -67,7 +74,7 @@ def assign_roles(GD, team=False, category='role', role_json_path=None):
     #     GD.events.drop(role+'_r', axis=1, inplace=True)
     #GD.events = GD.events.copy()
     return GD
-def assign_roles_multi(GD, team=False, categories=None, role_json_path=None):
+def assign_roles_multi(GD, process_DF='ALL', team=False, categories=None, role_json_path=None):
     if not role_json_path:
         role_json_path=os.path.join(Path(__file__).resolve().parent, "role_groups.json")
 
@@ -76,5 +83,5 @@ def assign_roles_multi(GD, team=False, categories=None, role_json_path=None):
     if not categories:
         categories = list({k for v in position_groups.values() for k in v.keys()})
     for category in categories:
-        GD=assign_roles(GD, team, category, role_json_path)
+        GD=assign_roles(GD, process_DF, team, category, role_json_path)
     return GD

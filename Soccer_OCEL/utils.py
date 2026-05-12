@@ -151,61 +151,36 @@ def calculate_teammate_pass_risk(df, ball_holder):
 
     return scores
 
-# formatting
-import pandas as pd
-
-def formatting(GD):
-    # Drop existing 'Player' column if it exists
-    if 'Player' in GD.events.columns:
-        GD.events = GD.events.drop(columns=['Player'])
+def formatting(df, rename_dic=None):
+    if 'Player' in df.columns:
+        df = df.drop(columns=['Player'])
     
-    # Rename columns
-    GD.events.rename(columns={
-        'eID': 'concept:name',
-        'pID': 'Player',
-        'possessionID': 'case:concept:name',
-        'timestamp': 'time:timestamp',
-        'x': 'attribute:x',
-        'y': 'attribute:y',
-        'enabled':'attribute:enabled',
-        'qualifier': 'attribute:qualifier',
-        'gameclock': 'attribute:gameclock',
-        'Session':'attribute:session',
-        'Frame':'attribute:frame',
-        'Team':'attribute:team',
-        'outcome':'attribute:outcome',
-        #'TeamLeft':'attribute:team_left',
-        #'TeamRight':'attribute:team_right',
-        'game':'attribute:game'
-        # 'End X': 'attribute:end_x',
-        # 'End Y': 'attribute:end_y'
-    }, inplace=True)
+    if not rename_dic:
+        rename_dic={
+            'eID': 'concept:name',
+            'pID': 'Player',
+            'possessionID': 'case:concept:name',
+            'timestamp': 'time:timestamp',
+            'x': 'attribute:x',
+            'y': 'attribute:y',
+            'enabled':'attribute:enabled',
+            'qualifier': 'attribute:qualifier',
+            'gameclock': 'attribute:gameclock',
+            'Session':'attribute:session',
+            'Frame':'attribute:frame',
+            'Team':'attribute:team',
+            'outcome':'attribute:outcome',
+            #'TeamLeft':'attribute:team_left',
+            #'TeamRight':'attribute:team_right',
+            'game':'attribute:game'
+            # 'End X': 'attribute:end_x',
+            # 'End Y': 'attribute:end_y'
+        }
+    df.rename(columns=rename_dic, inplace=True)
 
-    # Ensure columns exist before casting
-    # df = GD.events
-    # cast_columns = {
-    #     'case:concept:name': str,
-    #     'concept:name': str,
-    #     #'time:timestamp': 'datetime64[ns]',
-    #     'attribute:x': float,
-    #     'attribute:y': float,
-    #     'Player': str,
-    #     'attribute:team': str,
-    #     'attribute:session': str,
-    #     'attribute:outcome': float,
-    #     'attribute:frame': int,
-    #     'attribute:gameclock': float,
-    #     #'attribute:team_left': str,
-    #     #'attribute:team_right': str,
-    #     'attribute:game': str
-    # }
+    df['time:timestamp'] = pd.to_datetime(df['time:timestamp'], utc=True)
 
-    # for col, dtype in cast_columns.items():
-    #     if col in df.columns:
-    #         df[col] = df[col].astype(dtype)
-    GD.events['time:timestamp'] = pd.to_datetime(GD.events['time:timestamp'], utc=True)
-
-    return GD
+    return df
 
 def filter_players_involved_with_ball(df):
     """

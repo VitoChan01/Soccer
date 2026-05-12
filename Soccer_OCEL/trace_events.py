@@ -159,7 +159,7 @@ def movement_events(positions_df, FH_TeamRight, pitch, movement_directions=None,
         gdf=gdf.query('Frame_drop==0').copy()
         gdf.drop(['x','y','ball_x','ball_y','Frame_drop'], axis=1, inplace=True)
     else:
-        gdf.drop(['x','y','ball_x','ball_y'], axis=1, inplace=True)
+        gdf.drop(['ball_x','ball_y'], axis=1, inplace=True)
     gdf = gdf.reset_index(drop=True)
     next_geom = gdf.groupby(["Player", "Session"])["geometry"].shift(-1)
 
