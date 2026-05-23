@@ -172,7 +172,8 @@ def formatting(df, rename_dic=None):
             'outcome':'attribute:outcome',
             #'TeamLeft':'attribute:team_left',
             #'TeamRight':'attribute:team_right',
-            'game':'attribute:game'
+            'game':'attribute:game',
+            'role':'org:resource'
             # 'End X': 'attribute:end_x',
             # 'End Y': 'attribute:end_y'
         }

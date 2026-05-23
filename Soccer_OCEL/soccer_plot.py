@@ -5,6 +5,7 @@ from matplotlib.lines import Line2D
 from matplotlib.animation import FuncAnimation
 import matplotlib.pyplot as plt
 import numpy as np
+import os
 length = 105
 width = 68
 penalty_depth = 16.5
@@ -152,30 +153,31 @@ def vis_possession(GameData, possessionID):
     start_frame, end_frame, session=np.min(df['attribute:frame']),np.max(df['attribute:frame']),np.unique(df['attribute:session'])[0]
     print(start_frame, end_frame, session)
     ball=GameData.positions.query('`Frame`>=@start_frame & `Frame`<=@end_frame')
-    extract_ball=np.unique(ball['Player'])[0]
+    #extract_ball=np.unique(ball['Player'])[0]
     ball=ball.query('Player==@extract_ball')[['ball_x','ball_y']]
     ball = gpd.GeoDataFrame(
         ball,
         geometry=gpd.points_from_xy(ball["ball_x"], ball["ball_y"])
     )
-    ball_line = gpd.GeoDataFrame(
-        geometry=[LineString(zip(ball["ball_x"], ball["ball_y"]))]
-    )
+    # ball_line = gpd.GeoDataFrame(
+    #     geometry=[LineString(zip(ball["ball_x"], ball["ball_y"]))]
+    # )
     h_df=gpd.GeoDataFrame(df.query('`attribute:team`=="Home"'),
         geometry=GameData.events['trajectory'])
     a_df=gpd.GeoDataFrame(df.query('`attribute:team`=="Away"'),
         geometry=GameData.events['trajectory'])
 
-    frames = end_frame-start_frame
+    frame_list = list(range(start_frame, end_frame))
+    frame_list += [end_frame - 1] * 30
     session_df=GameData.positions[GameData.positions["Session"] == session]
-
+    pFrame=player_frame(df, end_frame)
     fig, ax = plt.subplots()
     def update(frame):
         ax.clear()
         ax.plot(ax=ax)
         field_gdf.plot(ax=ax, facecolor="none", edgecolor="black", linewidth=2)
 
-        past = session_df[session_df["Frame"] < frame]
+        past = session_df.query('Frame<@frame & Frame>=@start_frame')
         if len(past)!=0:
             home = past[past["Team"] == "Home"]
             away = past[past["Team"] == "Away"]
@@ -186,10 +188,13 @@ def vis_possession(GameData, possessionID):
         
         
         current = session_df[session_df["Frame"] == frame]
-        
+        holder = pFrame[frame-start_frame]
+
         home = current[current["Team"] == "Home"]
         away = current[current["Team"] == "Away"]
+        holder_row = current[current["Player"]==holder]
         
+        ax.scatter(holder_row["x"], holder_row["y"], edgecolor="green", s=100)
         ax.scatter(home["x"], home["y"], color="steelblue", s=50)
         ax.scatter(away["x"], away["y"], color="indianred", s=50)
         ax.scatter(current["ball_x"].iloc[0], current["ball_y"].iloc[0], edgecolor="black", color="green", s=30)
@@ -202,5 +207,19 @@ def vis_possession(GameData, possessionID):
             add_event(h_events, ax, "#4878a8")
         ax.set_title(f"Frame {frame}")
 
-    ani = FuncAnimation(fig, update, frames=frames, interval=90)
-    ani.save("match.gif", writer="pillow")
+    ani = FuncAnimation(fig, update, frames=frame_list, interval=90)
+    ani.save(os.path.join('output',f"{possessionID}.gif"), writer="pillow")
+
+def player_frame(df, end_frame):
+    pass_sub=df.query('ball.notna()')
+    pass_sub = pass_sub[pass_sub["concept:name"].str.endswith(("Pass", "Cross", "Received", "Intercepted"), na=False)]
+
+    PlayerPos=pass_sub[~(pass_sub['Player']==pass_sub['Player'].shift(1))]
+    players=np.array(PlayerPos['Player'])
+    playerframes=np.array(PlayerPos['attribute:frame'])
+    playerframes=np.append(playerframes, end_frame)
+    playerframes-=playerframes[0]
+    pFrame=[]
+    for i,f in enumerate(players):
+        pFrame+=[f]*playerframes[i+1]
+    return pFrame

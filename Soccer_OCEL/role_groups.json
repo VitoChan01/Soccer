@@ -5,6 +5,12 @@
         "side": "central",
         "position": "keeper"
     },
+    "IVZ": {
+        "role": "Defender",
+        "zone": "central",
+        "side": "central",
+        "position": "center-back"
+    },
     "IVL": {
         "role": "Defender",
         "zone": "central",

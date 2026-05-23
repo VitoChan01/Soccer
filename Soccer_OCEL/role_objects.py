@@ -15,9 +15,13 @@ def assign_roles(GD, process_DF='ALL', team=False, category='role', role_json_pa
             print(f'{i}: {k}')
         selection=int(input('Select groupping by index: '))
         category=keyset[selection]
+    # Track unknown position codes
+    unknown_positions = set()
 
     def get_group(position_code: str, group_type: str) -> str:
         info = position_groups.get(position_code, {category: "Unknown"})
+        if info is None:
+            unknown_positions.add(position_code)
         return info.get(group_type, "Unknown")
 
     def find_position(player_name: str) -> str:
@@ -49,30 +53,10 @@ def assign_roles(GD, process_DF='ALL', team=False, category='role', role_json_pa
         GD.positional_events=processing(GD.positional_events, category)
     if process_DF=='MOVEMENT' or process_DF == "ALL":
         GD.movement_events=processing(GD.movement_events, category)
-    #GD.events.drop(category, axis=1, inplace=True)
-
-    
-    # GD.events[category+'_r'] = GD.events["Recipient"].apply(find_role)
-    # roles = list({v[category] for v in position_groups.values() if category in v})
-    # for role in roles:
-    #     GD.events[role+'_r'] = GD.events["Recipient"].where(GD.events[category+'_r'] == role, None)   
-    #     GD.events[role] = GD.events.apply(
-    #         lambda row: (
-    #             # set([x for x in [row[role], row[role + '_r']] if pd.notna(x)])
-    #             # if pd.notna(row[role]) or pd.notna(row[role + '_r'])
-    #             # else None
-    #             row[role]+';'+ row[role + '_r'] if pd.notna(row[role]) and pd.notna(row[role + '_r'])
-    #             else row[role] if pd.notna(row[role]) 
-    #             else row[role+'_r'] if pd.notna(row[role + '_r'])
-    #             else None
-    #             #row[role] if pd.notna(row[role])
-    #             #else row[role + '_r'] if pd.notna(row[role + '_r'])
-    #             #else None
-    #         ),
-    #         axis=1
-    #     )
-    #     GD.events.drop(role+'_r', axis=1, inplace=True)
-    #GD.events = GD.events.copy()
+    if unknown_positions:
+        print(
+            f"Warning: The following role(s) were not found in role_groups.json: {sorted(unknown_positions)}"
+        )
     return GD
 def assign_roles_multi(GD, process_DF='ALL', team=False, categories=None, role_json_path=None):
     if not role_json_path:
