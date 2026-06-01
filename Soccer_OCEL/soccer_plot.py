@@ -162,10 +162,12 @@ def vis_possession(GameData, possessionID):
     # ball_line = gpd.GeoDataFrame(
     #     geometry=[LineString(zip(ball["ball_x"], ball["ball_y"]))]
     # )
-    h_df=gpd.GeoDataFrame(df.query('`attribute:team`=="Home"'),
-        geometry=GameData.events['trajectory'])
-    a_df=gpd.GeoDataFrame(df.query('`attribute:team`=="Away"'),
-        geometry=GameData.events['trajectory'])
+    h_df=df.query('`attribute:team`=="Home"')
+    a_df=df.query('`attribute:team`=="Away"')
+    #h_df=gpd.GeoDataFrame(df.query('`attribute:team`=="Home"'),
+    #    geometry=GameData.events['trajectory'])
+    #a_df=gpd.GeoDataFrame(df.query('`attribute:team`=="Away"'),
+    #    geometry=GameData.events['trajectory'])
 
     frame_list = list(range(start_frame, end_frame))
     frame_list += [end_frame - 1] * 30

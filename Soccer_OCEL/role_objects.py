@@ -53,6 +53,8 @@ def assign_roles(GD, process_DF='ALL', team=False, category='role', role_json_pa
         GD.positional_events=processing(GD.positional_events, category)
     if process_DF=='MOVEMENT' or process_DF == "ALL":
         GD.movement_events=processing(GD.movement_events, category)
+    if process_DF=='TEAMSHEET' or process_DF == "ALL":
+        GD.team_sheets_df=processing(GD.team_sheets_df, category)
     if unknown_positions:
         print(
             f"Warning: The following role(s) were not found in role_groups.json: {sorted(unknown_positions)}"

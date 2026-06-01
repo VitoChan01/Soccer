@@ -5,8 +5,12 @@ from floodlight.io.dfl import read_position_data_xml, read_event_data_xml, read_
 import Soccer_OCEL.utils as utils
 from Soccer_OCEL.trace_events import position_events, movement_events
 from Soccer_OCEL.trace_voronoi import add_voronoi_area
+from .role_objects import assign_roles as _assign_roles
+from .role_objects import assign_roles_multi as _assign_roles_multi
 import json
 import pm4py
+from shapely.geometry import Polygon, LineString, Point
+import geopandas as gpd
 
 
 #load
@@ -91,6 +95,118 @@ class GameData:
     def compute_voronoi(self):
         self.positions=add_voronoi_area(self.positions, self.pitch)
         return self
+    def assign_roles(self, process_DF='ALL', team=False, category='role', role_json_path=None):
+        self=_assign_roles(self, process_DF, team, category, role_json_path)
+        return self
+    def assign_roles_multi(self, process_DF='ALL', team=False, categories=None, role_json_path=None):
+        self=_assign_roles_multi(self, process_DF, team, categories, role_json_path)
+        return self
+
+    length = 105
+    width = 68
+    penalty_depth = 16.5
+    penalty_width = 40.3
+    goal_depth = 5.5
+    goal_width = 18.32
+    center_radius = 9.15
+    penalty_spot = 11
+
+    field = Polygon([
+        (0,0),
+        (length,0),
+        (length,width),
+        (0,width)
+    ])
+
+    left_half = Polygon([
+        (0,0),
+        (length/2,0),
+        (length/2,width),
+        (0,width)
+    ])
+
+    right_half = Polygon([
+        (length/2,0),
+        (length,0),
+        (length,width),
+        (length/2,width)
+    ])
+
+    center_line = LineString([
+        (length/2,0),
+        (length/2,width)
+    ])
+
+    center_circle = Point(length/2, width/2).buffer(center_radius)
+    y1_goal = (width - goal_width)/2
+    y2_goal = (width + goal_width)/2
+
+    left_goal_area = Polygon([
+        (0, y1_goal),
+        (goal_depth, y1_goal),
+        (goal_depth, y2_goal),
+        (0, y2_goal)
+    ])
+
+    right_goal_area = Polygon([
+        (length-goal_depth, y1_goal),
+        (length, y1_goal),
+        (length, y2_goal),
+        (length-goal_depth, y2_goal)
+    ])
+
+    y1_pen = (width - penalty_width)/2
+    y2_pen = (width + penalty_width)/2
+
+    left_penalty_area = Polygon([
+        (0, y1_pen),
+        (penalty_depth, y1_pen),
+        (penalty_depth, y2_pen),
+        (0, y2_pen)
+    ])
+
+    right_penalty_area = Polygon([
+        (length-penalty_depth, y1_pen),
+        (length, y1_pen),
+        (length, y2_pen),
+        (length-penalty_depth, y2_pen)
+    ])
+
+    left_penalty_spot = Point(penalty_spot, width/2)
+    right_penalty_spot = Point(length-penalty_spot, width/2)
+
+
+    field_gdf = gpd.GeoDataFrame({
+        "name":[
+            "field",
+            "left_half",
+            "right_half",
+            "center_line",
+            "center_circle",
+            "left_goal_area",
+            "right_goal_area",
+            "left_penalty_area",
+            "right_penalty_area"
+            #,
+            #"left_penalty_spot",
+            #"right_penalty_spot"
+        ],
+        "geometry":[
+            field,
+            left_half,
+            right_half,
+            center_line,
+            center_circle,
+            left_goal_area,
+            right_goal_area,
+            left_penalty_area,
+            right_penalty_area
+            #,
+            #left_penalty_spot,
+            #right_penalty_spot
+        ]
+    })
+
 
 
 def load_game_data(path, Game, xy_fields=(10,10)
