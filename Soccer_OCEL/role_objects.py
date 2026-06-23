@@ -38,12 +38,20 @@ def assign_roles(GD, process_DF='ALL', team=False, category='role', role_json_pa
 
         if team:
             for role in roles:
-                df[f"{role}_h"] = df["pID"].where(
-                    (df[category] == role) & (df["Team"] == "Home"), None
-                )
-                df[f"{role}_a"] = df["pID"].where(
-                    (df[category] == role) & (df["Team"] == "Away"), None
-                )
+                try:
+                    df[f"{role}_h"] = df["pID"].where(
+                        (df[category] == role) & (df["Team"] == "Home"), None
+                    )
+                    df[f"{role}_a"] = df["pID"].where(
+                        (df[category] == role) & (df["Team"] == "Away"), None
+                    )
+                except:
+                    df[f"{role}_h"] = df["pID"].where(
+                        (df[category] == role) & (df["Home_Away"] == "Home"), None
+                    )
+                    df[f"{role}_a"] = df["pID"].where(
+                        (df[category] == role) & (df["Home_Away"] == "Away"), None
+                    )
         for role in roles:
             df[role] = df["pID"].where(df[category] == role, None)
         return df

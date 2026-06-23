@@ -9,3 +9,4 @@ from . import role_objects
 from . import isolation_forest
 from . import soccer_plot
 from . import trajectory_clustering
+from . import translucent

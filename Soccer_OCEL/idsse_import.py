@@ -2,12 +2,12 @@ import pandas as pd
 import numpy as np
 import os
 from floodlight.io.dfl import read_position_data_xml, read_event_data_xml, read_teamsheets_from_mat_info_xml
-import Soccer_OCEL.utils as utils
-from Soccer_OCEL.trace_events import position_events, movement_events
-from Soccer_OCEL.trace_voronoi import add_voronoi_area
+from . import utils
+from .translucent import add_pass_enabled
+from .trace_events import position_events, movement_events
+from .trace_voronoi import add_voronoi_area
 from .role_objects import assign_roles as _assign_roles
 from .role_objects import assign_roles_multi as _assign_roles_multi
-import json
 import pm4py
 from shapely.geometry import Polygon, LineString, Point
 import geopandas as gpd
@@ -811,58 +811,3 @@ def encode_position(GD):
     GD.events=outdf.sort_values(['Session', 'timestamp']).reset_index(drop=True)
     
     return GD
-
-#enabled events
-def best_pass(current_player, Frame, Session, recipient, GD):
-    bp=False
-    passes=[]
-    if not pd.isna(current_player):
-        df=GD.positions.query('Frame == @Frame & Session == @Session')
-        teammate_scores = utils.calculate_teammate_pass_risk(df, current_player)
-        min_value = min(teammate_scores.values())
-        min_keys = [k for k, v in teammate_scores.items() if v == min_value]
-        if recipient:
-            if recipient in min_keys:
-                min_keys.remove(recipient)
-                bp=True
-        passes=list(set([utils.find_position(p, GD) for p in min_keys]))
-        passes=['Play_Pass_'+t for t in passes]
-    return passes, bp
-
-# def add_pass_enabled(GD):
-#     GD.events['enabled'] = [[] for _ in range(len(GD.events))]
-
-#     mask = GD.events['eID'].str.contains('Shot|Pass|Cross', case=False, regex=True)
-
-#     def add_best_pass(row):
-#         if mask.loc[row.name]:
-#             best = best_pass(
-#                 row['pID'], row['Frame'], row['Session'],
-#                 recipient=row.get('Recipient', None),
-#                 GD=GD
-#             )
-#             row['enabled'] = row['enabled'] + best
-#         return row
-
-#     GD.events = GD.events.apply(add_best_pass, axis=1)
-#     return GD
-def add_pass_enabled(GD):
-    if 'enabled' not in GD.events.columns:
-        GD.events['enabled'] = [[] for _ in range(len(GD.events))]
-    if 'best_pass' not in GD.events.columns:
-        GD.events['best_pass'] = False
-
-
-    #mask = GD.events['eID'].str.contains('Shot|Pass|Cross', case=False, regex=True)
-    mask = GD.events['eID'].str.contains('Shot|Pass|Cross', case=False, regex=True) & \
-       ~GD.events['eID'].str.contains('Received|Intercepted', case=False, regex=True)
-
-    for idx in GD.events.index[mask]:
-        recipient = GD.events.at[idx, 'Recipient'] if 'Recipient' in GD.events.columns else None
-        best, bp = best_pass(GD.events.at[idx, 'pID'], GD.events.at[idx, 'Frame'], GD.events.at[idx, 'Session'], recipient, GD)
-        GD.events.at[idx, 'enabled'] += best
-        if bp:
-            GD.events.at[idx, 'best_pass'] += bp
-
-    return GD
-
