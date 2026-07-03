@@ -8,6 +8,7 @@ from .trace_events import position_events, movement_events
 from .trace_voronoi import add_voronoi_area
 from .role_objects import assign_roles as _assign_roles
 from .role_objects import assign_roles_multi as _assign_roles_multi
+from .pass_feasibility import get_k_enabled_passes, plot_feasibility_map, plot_component_breakdown, _log_feasible_passes, _log_enabled
 import pm4py
 from shapely.geometry import Polygon, LineString, Point
 import geopandas as gpd
@@ -100,6 +101,9 @@ class GameData:
         return self
     def assign_roles_multi(self, process_DF='ALL', team=False, categories=None, role_json_path=None):
         self=_assign_roles_multi(self, process_DF, team, categories, role_json_path)
+        return self
+    def k_enabled(self, k, encode=['role', 'name', 'zone', 'typle', 'label']):
+        self = _log_enabled(self, k=k, encode=encode)
         return self
 
     length = 105
@@ -210,12 +214,11 @@ class GameData:
 
 
 def load_game_data(path, Game, xy_fields=(10,10)
-                   , encode_recipient_role=False
-                   , voronoi_area=False, event_based_possession=False, pass_direction=False, pass_distance=False
+                   , encode_recipient_role=False, enabled_passes=False, enabled_with_speed=False, voronoi_area=False, event_based_possession=False, pass_direction=False, pass_distance=False
                    , get_position_events=True, get_movement_events=True
                    , movement_directions=None, movement_step=None, movement_max_gap=None, movement_noise_threshold=0.09):
     Game_data = load_game_data_path(path, Game)
-    settings={'encode_recipient_role': encode_recipient_role, 'voronoi_area': voronoi_area, 'event_based_possession': event_based_possession, 'get_position_events': get_position_events, 'pass_direction': pass_direction, 'pass_distance': pass_distance, 'get_movement_events': get_movement_events, 'movement_directions': movement_directions, 'movement_step':movement_step, 'movement_max_gap': movement_max_gap, 'movement_noise_threshold':movement_noise_threshold}
+    settings={'encode_recipient_role': encode_recipient_role, 'enabled_passes': enabled_passes, 'enabled_with_speed': enabled_with_speed, 'voronoi_area': voronoi_area, 'event_based_possession': event_based_possession, 'get_position_events': get_position_events, 'pass_direction': pass_direction, 'pass_distance': pass_distance, 'get_movement_events': get_movement_events, 'movement_directions': movement_directions, 'movement_step':movement_step, 'movement_max_gap': movement_max_gap, 'movement_noise_threshold':movement_noise_threshold, 'xy_fields': xy_fields}
 
     events, team_sheets, pitch = read_event_data_xml(os.path.join(
         path, Game_data[1]), os.path.join(path, Game_data[0]))
@@ -287,7 +290,9 @@ def load_game_data(path, Game, xy_fields=(10,10)
     GD.events['Grid Position'] = GD.events.apply(lambda row: utils.get_field_position(row['x'], row['y'], GD.pitch, xy_fields=xy_fields), axis=1)
     GD.positions['Grid Position'] = GD.positions.apply(lambda row: utils.get_field_position(row['x'], row['y'], GD.pitch, xy_fields=xy_fields), axis=1)
     #enabled events
-    GD=add_pass_enabled(GD)
+    #GD=add_pass_enabled(GD)
+    if enabled_passes:
+        GD=_log_feasible_passes(GD, speed=enabled_with_speed)
     #encode recipient role
     if encode_recipient_role:
         GD=encode_position(GD)

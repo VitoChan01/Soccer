@@ -58,7 +58,7 @@ def get_tID_from_teamside(teamside, team_sheets_df):
     else:
         return None
     
-def get_field_position(x, y,pitch, xy_fields=(10,10)):
+def get_field_position(x, y, pitch, xy_fields=(10,10)):
     """
     Calculate the position of a field in a grid based on its coordinates.
 
@@ -84,8 +84,6 @@ def get_field_position(x, y,pitch, xy_fields=(10,10)):
     y_pos = math.floor(y / yblock)
     x_pos=np.clip(x_pos, 0, xy_fields[0] - 1)
     y_pos=np.clip(y_pos, 0, xy_fields[1] - 1)
-    
-
     return (x_pos, y_pos)
 def find_position(player_name, GD):
     row = GD.team_sheets_df.loc[GD.team_sheets_df["pID"] == player_name, "position"]
@@ -163,7 +161,7 @@ def formatting(df, rename_dic=None):
             'timestamp': 'time:timestamp',
             'x': 'attribute:x',
             'y': 'attribute:y',
-            'enabled':'attribute:enabled',
+            #'enabled':'attribute:enabled',
             'qualifier': 'attribute:qualifier',
             'gameclock': 'attribute:gameclock',
             'Session':'attribute:session',
