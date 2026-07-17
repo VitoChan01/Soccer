@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 import pandas as pd
 from . import utils
-from .idsse_import import GameData
+
 FIELD_LENGTH: float = 105.0
 FIELD_WIDTH:  float = 68.0
 
@@ -612,7 +612,125 @@ def rank_receivers(scores: list[float], receivers: list[Player]) -> list[tuple[f
     ranked = sorted(zip(scores, receivers), key=lambda x: -x[0])
     return ranked
 
-
+# Cross detection
+BOX_LENGTH: float = 16.5   # penalty area depth, metres
+BOX_WIDTH:  float = 40.3   # penalty area width, metres
+ 
+# Passer must be in roughly the attacking third to count as a cross origin.
+ATTACKING_THIRD_FRACTION: float = 2.0 / 3.0
+ 
+ 
+def _box_y_range(field_width: float = FIELD_WIDTH) -> tuple[float, float]:
+    """Y-range spanned by the penalty area (same at both ends of the pitch)."""
+    y0 = (field_width - BOX_WIDTH) / 2
+    return y0, y0 + BOX_WIDTH
+ 
+ 
+def _is_wide_start_zone(
+    passer_pos:       np.ndarray,
+    attack_direction: int = 1,
+    field_length:     float = FIELD_LENGTH,
+    field_width:      float = FIELD_WIDTH,
+) -> bool:
+    """
+    Heuristic 'valid cross origin' check: passer is in the attacking third
+    AND wide of the penalty area (outside the box's y-range).
+ 
+    attack_direction : +1 if the team is attacking towards x = field_length,
+                        -1 if attacking towards x = 0. You need to supply the
+                        correct value for your data's coordinate convention —
+                        nothing in PassEvent/Player currently encodes it.
+    """
+    x, y = passer_pos
+    y_lo, y_hi = _box_y_range(field_width)
+ 
+    if attack_direction >= 0:
+        in_final_third = x >= field_length * ATTACKING_THIRD_FRACTION
+    else:
+        in_final_third = x <= field_length * (1 - ATTACKING_THIRD_FRACTION)
+ 
+    is_wide = (y < y_lo) or (y > y_hi)
+    return bool(in_final_third and is_wide)
+ 
+ 
+def _is_in_box(
+    pos:              np.ndarray,
+    attack_direction: int = 1,
+    field_length:     float = FIELD_LENGTH,
+    field_width:      float = FIELD_WIDTH,
+) -> bool:
+    """Whether a position falls inside the attacking penalty area."""
+    x, y = pos
+    y_lo, y_hi = _box_y_range(field_width)
+ 
+    if attack_direction >= 0:
+        in_box_x = x >= field_length - BOX_LENGTH
+    else:
+        in_box_x = x <= BOX_LENGTH
+ 
+    in_box_y = y_lo <= y <= y_hi
+    return bool(in_box_x and in_box_y)
+ 
+ 
+def is_cross(
+    passer_pos:       np.ndarray,
+    receiver_pos:     np.ndarray,
+    attack_direction: int = 1,
+    field_length:     float = FIELD_LENGTH,
+    field_width:      float = FIELD_WIDTH,
+) -> bool:
+    """
+    Location-only cross heuristic.
+ 
+    1. Gate on the passer: must be wide (outside the box's y-range) and in
+       the attacking third. If this fails, return False immediately —
+       the receiver's location is irrelevant.
+    2. Only if #1 holds, check whether the receiver's location falls inside
+       the penalty area.
+ 
+    Note: this only re-labels genuine 'Play_Pass' events (open play). It is
+    not applied to throw-ins, kick-offs, corners, etc., since those aren't
+    open-play passes and shouldn't be reclassified as crosses regardless of
+    where they start/end — that filtering happens at the call site by only
+    invoking this when prefix == 'Play_Pass'.
+    """
+    if not _is_wide_start_zone(passer_pos, attack_direction, field_length, field_width):
+        return False
+    return _is_in_box(receiver_pos, attack_direction, field_length, field_width)
+ 
+ 
+def _get_attack_direction(
+    GD,
+    session: int,
+    attacking_team: str,
+) -> int:
+    """
+    Derive attack_direction (+1 / -1) for `attacking_team` in a given
+    `session`, from GD.FH_TeamRight — the team ('Home' or 'Away') that
+    defends/attacks from the right side of the pitch during the first half
+    (Session 1).
+ 
+    Sides swap at every half-time restart (standard convention): odd
+    sessions (1, 3, ...) match GD.FH_TeamRight as-is, even sessions
+    (2, 4, ...) use the flipped team.
+ 
+    A team "on the right" defends the right-hand goal (near x = FIELD_LENGTH)
+    and therefore attacks towards x = 0 (attack_direction = -1). The team on
+    the left attacks towards x = FIELD_LENGTH (attack_direction = +1).
+ 
+    NOTE: this assumes session numbering alternates halves by parity (no
+    extra-time/shootout sessions that would break the odd/even pattern).
+    Adjust here if your session numbering convention differs.
+    """
+    team_right_first_half = GD.FH_TeamRight
+    other_team = "Away" if team_right_first_half == "Home" else "Home"
+ 
+    is_first_half_like = (session % 2 == 1)
+    team_on_right = team_right_first_half if is_first_half_like else other_team
+ 
+    return -1 if attacking_team == team_on_right else 1
+ 
+ 
 # Visualization
 def _field_background(ax: plt.Axes,
                       field_length: float = FIELD_LENGTH,
@@ -791,12 +909,17 @@ def plot_component_breakdown(
     return fig
 
 
+import json
+from pathlib import Path
+import os
 
 def get_k_enabled_passes(
     result: dict,
     k: int = 3,
     encode: str = 'role',
+    category: str = 'role',
     prefix: str = 'Play_Pass',
+    attack_direction: int = 1,
     arg: dict = {
     'pitch':None,
     'xy_fields': (10, 10),
@@ -816,25 +939,63 @@ def get_k_enabled_passes(
              'zone' → field_gdf zone
              'tuple' → field xy tuple
              'label' → field label from xy_fields
+             'role:role' -> player role from team_sheets_df (e.g. Defender)
+             'role:zone' -> initial zone from team_sheets_df (e.g. wing)
+             'role:side' -> player side (e.g. left)
+             'role:player_position' -> player position (e.g. forward)
     prefix : string prepended to each label
-    para : dict of required inputs for
+    attack_direction : +1 if the passing team attacks towards x = FIELD_LENGTH, -1 if towards x = 0.
+    arg : dict of required inputs for
                label: GameData.pitch & GameDAta.settings['xy_fields']
                zone: GameData.field_gdf
                tuple: GameData.pitch
     """
     best_k = result['ranked'][:k]  
+    passer_pos = result['event'].passer.position
+    effective_prefixes = [
+        'Play_Cross'
+        if is_cross(passer_pos, player.position, attack_direction)
+        else 'Play_Pass'
+        for _, player in best_k
+    ]
+    if prefix not in ("Play_Pass", "Play_Cross"):
+        pre = prefix.split("Play_")[0].rstrip("_")
+
+        effective_prefixes = [f"{pre}_{s}" for s in effective_prefixes]
+
+    def _load_position_groups():
+        path=os.path.join(Path(__file__).resolve().parent, "role_groups.json")
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+
+    def _get_group(position_code: str, group_type: str, position_groups: dict) -> str:
+        info = position_groups.get(position_code, {})
+        return info.get(group_type, "Unknown") if info else "Unknown"
 
     if encode == 'role':
-        return [f"{prefix}_{player.role}" for _, player in best_k]
+        return [
+            f"{p}_{player.role}"
+            for p, (_, player) in zip(effective_prefixes, best_k)
+        ]
+    elif encode.startswith('role:'):
+        category = encode.split(':', 1)[1]
+        position_groups = _load_position_groups()
+        return [
+            f"{p}_{_get_group(player.role, category, position_groups)}"
+            for p, (_, player) in zip(effective_prefixes, best_k)
+        ]
     elif encode == 'name':
-        return [f"{prefix}_{player.name}" for _, player in best_k]
+        return [
+            f"{p}_{player.name}"
+            for p, (_, player) in zip(effective_prefixes, best_k)
+        ]
     elif encode == 'tuple':
         if arg['pitch'] is None:
             raise ValueError("pitch must be provided when encode='tuple'.")
         labels = []
-        for _, player in best_k:
+        for p, (_, player) in zip(effective_prefixes, best_k):
             col, row = utils.get_field_position(player.position[0], player.position[1], arg['pitch'], arg['xy_fields'])
-            labels.append(f"{prefix}_Grid_{col}_{row}")
+            labels.append(f"{p}_Grid_{col}_{row}")
         return labels
     elif encode == 'label':
         if arg['pitch'] is None:
@@ -842,10 +1003,10 @@ def get_k_enabled_passes(
         def _to_label(col, row):
             return f"{chr(ord('A') + col)}{row + 1}"
         return [
-            f"{prefix}_{_to_label(*utils.get_field_position(player.position[0], player.position[1], arg['pitch'], arg['xy_fields']))}"
-            for _, player in best_k
+            f"{p}_{_to_label(*utils.get_field_position(player.position[0], player.position[1], arg['pitch'], arg['xy_fields']))}"
+            for p, (_, player) in zip(effective_prefixes, best_k)
         ]
-
+ 
     elif encode == 'zone':
         if arg['field_gdf'] is None:
             raise ValueError("field_gdf must be provided when encode='zone'.")
@@ -858,20 +1019,20 @@ def get_k_enabled_passes(
             ]["name"].tolist()
             return ", ".join(zones) if zones else "open_play"
         return [
-            f"{prefix}_{_to_zone(player.position[0], player.position[1])}"
-            for _, player in best_k
+            f"{p}_{_to_zone(player.position[0], player.position[1])}"
+            for p, (_, player) in zip(effective_prefixes, best_k)
         ]
-
+ 
     else:
         raise ValueError(
             f"encode must be 'role', 'name', 'tuple', 'label', or 'zone'. "
             f"Got {encode!r}."
         )
-    
+
 def _log_feasible_passes(
-    GD: GameData, 
+    GD, 
     speed: bool = False, 
-    ) -> GameData:
+    ):
     """
     Return a event log with feasibility analysis.
     """
@@ -903,10 +1064,11 @@ def _log_feasible_passes(
     return GD
 
 def _log_enabled(
-    GD: GameData, 
+    GD, 
     k: int = 3, 
-    encode: list = ['role', 'name', 'zone', 'typle', 'label']
-    ) -> GameData:
+    encode: list = ['role', 'name', 'zone', 'tuple', 'label''role:role', 'role:zone', 'role:side', 'role:player_position'],
+    attack_direction: Optional[int] = None
+    ):
     """
     Return a event log with enabled pass events.
 
@@ -920,6 +1082,10 @@ def _log_enabled(
              'zone' → field_gdf zone
              'tuple' → field xy tuple
              'label' → field label from xy_fields
+             'role:role' -> player role from team_sheets_df (e.g. Defender)
+             'role:zone' -> initial zone from team_sheets_df (e.g. wing)
+             'role:side' -> player side (e.g. left)
+             'role:player_position' -> player position (e.g. forward)
     """
     for t in encode:
         if 'enabled_'+t not in GD.events.columns:
@@ -936,12 +1102,21 @@ def _log_enabled(
 
     for idx in GD.events.index[mask]:
         result=GD.events.loc[idx]['feasible']
+        session, attacking_team = GD.events.loc[idx][['Session', 'Team']]
+        event_attack_direction = (
+            attack_direction if attack_direction is not None
+            else _get_attack_direction(GD, session, attacking_team)
+        )
         for t in encode:
             try:
-                enabled = get_k_enabled_passes(result, k=k, encode=t, prefix=result['event'].event, arg=arg)
+                enabled = get_k_enabled_passes(
+                    result, k=k, encode=t, prefix=result['event'].event,
+                    attack_direction=event_attack_direction, arg=arg,
+                )
                 GD.events.at[idx, 'enabled_'+t] += enabled
             except ValueError as e_err:
                 print(f"Skipping event {result['event']} (idx={idx}): {e_err}")
                 continue
-
+ 
     return GD
+ 

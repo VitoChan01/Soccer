@@ -3,67 +3,67 @@
         "role": "Goalkeeper",
         "zone": "defensive",
         "side": "central",
-        "position": "keeper"
+        "player_position": "keeper"
     },
     "IVZ": {
         "role": "Defender",
         "zone": "central",
         "side": "central",
-        "position": "center-back"
+        "player_position": "center-back"
     },
     "IVL": {
         "role": "Defender",
         "zone": "central",
         "side": "central",
-        "position": "center-back"
+        "player_position": "center-back"
     },
     "IVR": {
         "role": "Defender",
         "zone": "central",
         "side": "central",
-        "position": "center-back"
+        "player_position": "center-back"
     },
     "LV": {
         "role": "Defender",
         "zone": "wing",
         "side": "left",
-        "position": "fullback"
+        "player_position": "fullback"
     },
     "RV": {
         "role": "Defender",
         "zone": "wing",
         "side": "right",
-        "position": "fullback"
+        "player_position": "fullback"
     },
     "DML": {
         "role": "Midfielder",
         "zone": "central",
         "side": "left",
-        "position": "defensive-mid"
+        "player_position": "defensive-mid"
     },
     "DMR": {
         "role": "Midfielder",
         "zone": "central",
         "side": "right",
-        "position": "defensive-mid"
+        "player_position": "defensive-mid"
     },
     "DLM": {
         "role": "Midfielder",
         "zone": "central",
         "side": "central",
-        "position": "defensive-mid"
+        "player_position": "defensive-mid"
     },
     "OLM": {
         "role": "Midfielder",
         "zone": "wing",
         "side": "left",
-        "position": "attacking-mid"
+        "player_position": "attacking-mid"
     },
     "ORM": {
         "role": "Midfielder",
         "zone": "wing",
         "side": "right",
-        "position": "attacking-mid"
+        "player_position": "attacking-mid"
     },
     "ZO": {
         "role": "Midfielder",
@@ -75,12 +75,12 @@
         "role": "Forward",
         "zone": "wing",
         "side": "left",
-        "position": "forward"
+        "player_position": "forward"
     },
     "STZ": {
         "role": "Forward",
         "zone": "central",
         "side": "central",
-        "position": "forward-central"
+        "player_position": "forward-central"
     }
 }

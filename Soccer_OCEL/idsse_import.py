@@ -90,8 +90,8 @@ class GameData:
     def encode_pass_distance(self):
         self.events=_encode_pass_distance(self.events)
         return self
-    def encode_recipient_role(self):
-        self=encode_position(self)
+    def encode_recipient_role(self, encode='role'):
+        self=encode_position(self, encode=encode)
         return self
     def compute_voronoi(self):
         self.positions=add_voronoi_area(self.positions, self.pitch)
@@ -102,7 +102,7 @@ class GameData:
     def assign_roles_multi(self, process_DF='ALL', team=False, categories=None, role_json_path=None):
         self=_assign_roles_multi(self, process_DF, team, categories, role_json_path)
         return self
-    def k_enabled(self, k, encode=['role', 'name', 'zone', 'typle', 'label']):
+    def k_enabled(self, k=3, encode=['role', 'name', 'zone', 'tuple', 'label', 'role:role', 'role:zone', 'role:side', 'role:player_position']):
         self = _log_enabled(self, k=k, encode=encode)
         return self
 
@@ -795,24 +795,130 @@ def frame_possessionID_matching(df_withID, df_withoutID):
     return result
 
 # pass and cross recipient encoding
-def encode_position(GD):
-    #pass_mask = ocel_df['eID'].str.contains('Pass') | ocel_df['eID'].str.contains('Cross')
+import json
+from pathlib import Path
+import os
+
+
+def encode_position(GD, encode='role', role_json_path=None):
+    """
+    Append receiver position/role info to eID for successful pass events.
+
+    Parameters
+    ----------
+    GD : GameData object
+    encode : which attribute to use
+             'role'            → raw position code from team_sheets_df (original behavior)
+             'role:<category>' → look up the position code in role_groups.json, then use the <category> grouping for it
+             'name'            → recipient's pID (player name/id) itself
+             'zone'            → zone from field_gdf containing recipient's position
+             'tuple'           → grid (col,row) tuple from recipient's position
+             'label'           → letter-number field label (e.g. 'C4') from recipient's position
+    role_json_path : path to role_groups.json (only used for 'role:<category>' / 'role:all')
+    """
+    def _get_recipient_xy(row):
+        """Look up recipient's x, y from GD.positional_events via Session + Frame + pID."""
+        session = row['Session']
+        frame = row['Frame']
+        recipient = row['Recipient']
+
+        match = GD.positions.loc[
+            (GD.positions['Session'] == session) &
+            (GD.positions['Frame'] == frame) &
+            (GD.positions['Player'] == recipient),
+            ['x', 'y']  
+        ]
+        if match.empty:
+            return None, None
+        return match['x'].values[0], match['y'].values[0]
     pass_events = GD.events[
         GD.events['Recipient'].notna() &
         GD.events['Evaluation'].str.startswith('successful')
     ].copy()
+
     pass_events['player_position'] = pass_events.apply(
-        lambda row: GD.team_sheets_df.loc[GD.team_sheets_df['pID'] == row['Recipient'], 'position'].values[0]
-        ,
+        lambda row: GD.team_sheets_df.loc[GD.team_sheets_df['pID'] == row['Recipient'], 'position'].values[0],
         axis=1
     )
 
-    pass_events['eID'] = pass_events['eID'] + '_' + pass_events['player_position'].astype(str)
-    outdf= GD.events.copy()
+    if encode == 'role':
+        suffix = pass_events['player_position'].astype(str)
+
+    elif encode.startswith('role:'):
+        category = encode.split(':', 1)[1]
+
+        path = role_json_path or os.path.join(Path(__file__).resolve().parent, "role_groups.json")
+        with open(path, "r", encoding="utf-8") as f:
+            position_groups = json.load(f)
+
+        def _get_group(position_code, group_type):
+            info = position_groups.get(position_code, {})
+            return info.get(group_type, "Unknown") if info else "Unknown"
+
+        
+        suffix = pass_events['player_position'].apply(lambda pos: _get_group(pos, category))
+
+    elif encode == 'name':
+        suffix = pass_events['Recipient'].astype(str)
+
+    elif encode in ('tuple', 'label', 'zone'):
+        arg={
+            'pitch':GD.pitch,
+            'xy_fields': GD.settings['xy_fields'],
+            'field_gdf': GD.field_gdf
+        }
+        if encode == 'tuple':
+            if arg['pitch'] is None:
+                raise ValueError("arg['pitch'] must be provided when encode='tuple'.")
+            def _to_tuple(row):
+                x, y = _get_recipient_xy(row)
+                if x is None:
+                    return "Unknown"
+                col, r = utils.get_field_position(x, y, arg['pitch'], arg['xy_fields'])
+                return f"Grid_{col}_{r}"
+            suffix = pass_events.apply(_to_tuple, axis=1)
+        elif encode == 'label':
+            if arg['pitch'] is None:
+                raise ValueError("arg['pitch'] must be provided when encode='label'.")
+            def _to_label_str(col, r):
+                return f"{chr(ord('A') + col)}{r + 1}"
+            def _to_label(row):
+                x, y = _get_recipient_xy(row)
+                if x is None:
+                    return "Unknown"
+                col, r = utils.get_field_position(x, y, arg['pitch'], arg['xy_fields'])
+                return _to_label_str(col, r)
+            suffix = pass_events.apply(_to_label, axis=1)
+
+        elif encode == 'zone':
+            if arg['field_gdf'] is None:
+                raise ValueError("arg['field_gdf'] must be provided when encode='zone'.")
+            from shapely.geometry import Point
+            def _to_zone(row):
+                x, y = _get_recipient_xy(row)
+                if x is None:
+                    return "Unknown"
+                point = Point(x, y)
+                zones = arg['field_gdf'][
+                    (arg['field_gdf']["name"] != "field") &
+                    arg['field_gdf'].geometry.contains(point)
+                ]["name"].tolist()
+                return ", ".join(zones) if zones else "open_play"
+            suffix = pass_events.apply(_to_zone, axis=1)
+
+
+    else:
+        raise ValueError(
+            f"encode must be 'role' or 'role:<category>'. Got {encode!r}."
+        )
+    
+    pass_events['eID'] = pass_events['eID'] + '_' + suffix
+
+    outdf = GD.events.copy()
     outdf[
         GD.events['Recipient'].notna() &
         GD.events['Evaluation'].str.startswith('successful')
     ] = pass_events
-    GD.events=outdf.sort_values(['Session', 'timestamp']).reset_index(drop=True)
-    
+    GD.events = outdf.sort_values(['Session', 'timestamp']).reset_index(drop=True)
+
     return GD
